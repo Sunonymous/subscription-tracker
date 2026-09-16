@@ -3,7 +3,26 @@
 #+STARTUP: fold
 
 * Project Overview
-Literate environment for =subscription_tracker=.
+This is an extremely simple subscription viewer and manager. You may enter data describing your personal financial subscriptions and view them all in one place. All data stays local and may be imported/exported to other devices at will. This tool should also work to provide a concrete record for your regular recurring expenses if the need of sharing it arises.
+
+* UI Implementation Plan
+The interface is being built incrementally, card-by-card, rather than all at
+once. Each phase below is checked off once it actually lands in the code
+sections further down, so this list stays a true reflection of what exists,
+not just what was intended.
+
+- [X] Phase 0 --- Retro documentation pass: short Org prose next to every existing code block explaining the /why/, not just the code.
+- [X] Phase A --- Read-only subscription list: render
+  =::subs/subscription-list= as abbreviated cards. Validates the data flow end-to-end before any interactivity is added.
+- [X] Phase B --- Expand/collapse per card (local component state), showing full field detail.
+- [ ] Phase C --- Edit-in-place: an "Edit" toggle in the expanded card swaps to the same form used for creation, dispatching =::events/update-subscription=.
+- [X] Phase D --- Create: an inline "+ Add subscription" form at the top of the list, dispatching =::events/add-subscription=. (Built ahead of Phase C: with no data at all, there was nothing to verify Phase B against, and this form is what Phase C will reuse for editing anyway.)
+- [ ] Phase E --- Delete: a control plus confirm step, dispatching =::events/remove-subscription=.
+- [ ] Phase F --- Accounts: mirror B--E for accounts, including delete confirmation copy that reflects the =::events/remove-account= unlink-cascade.
+- [ ] Phase G --- Category autocomplete and color assignment: a derived sub over =::db/categories= keys feeding a =<datalist>= on the subscription form, plus a way to set/change a category's =:color=.
+- [ ] Phase H --- Derived stats bar: a =subscription-tracker.util= namespace for cost normalization, plus a sub for total monthly/yearly spend and active count.
+- [ ] Phase I --- Filtering & sorting: a =:ui= app-db slice (sort key/direction, filters) plus controls; cancelled subscriptions sorted to the bottom and visually dimmed by default.
+- [ ] Phase J --- Import/export: download =:subscriptions=/=:accounts= as a file; re-validate through =::db/db= spec before merging an import back in.
 
 * Configuration & Static Assets
 ** Shadow-CLJS Configuration
@@ -73,11 +92,12 @@ Literate environment for =subscription_tracker=.
   <head>
     <meta charset='utf-8'>
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>subscription_tracker</title>
+    <title>Subscription_Tracker</title>
+    <link rel="stylesheet" href="styles.css" type="text/css" media="screen" />
   </head>
   <body>
     <noscript>
-      subscription_tracker is a JavaScript app. Please enable JavaScript to continue.
+      Subscription Tracker is a JavaScript app. Please enable JavaScript to continue.
     </noscript>
     <div id="app"></div>
     <script src="/js/compiled/app.js"></script>
@@ -88,6 +108,99 @@ Literate environment for =subscription_tracker=.
 ** Stylesheet
 #+BEGIN_SRC css :tangle resources/public/styles.css
 /* Base Styles */
+
+.subscription-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.subscription-card {
+  padding: 0.75rem 1rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+}
+
+.subscription-summary {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  cursor: pointer;
+}
+
+.subscription-name {
+  font-weight: 600;
+  flex: 1;
+}
+
+.subscription-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #eee;
+  font-size: 0.9rem;
+}
+
+.field-label {
+  font-weight: 600;
+}
+
+.subscription-notes {
+  white-space: pre-wrap;
+  color: #555;
+}
+
+.empty-state {
+  color: #888;
+  font-style: italic;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.subscription-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+}
+
+.subscription-form input,
+.subscription-form select,
+.subscription-form textarea {
+  padding: 0.4rem;
+  font: inherit;
+}
+
+.subscription-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.9rem;
+}
+
+.subscription-form label.checkbox-label {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.subscription-form button {
+  align-self: flex-start;
+}
+
+.category-value {
+  text-transform: capitalize;
+}
 #+END_SRC
 
 * Core Application Architecture
@@ -134,6 +247,43 @@ Right now this is just boilerplate/template code.
 ** NS: subscription-tracker.db
 File path: =src/subscription_tracker/db.cljs=
 
+The two =default-*= maps are shapes/templates, not valid instances --- most
+fields are =nil= placeholders meant to be =merge=d over when creating a real
+entity (see =::events/add-subscription=/=::events/add-account=), not values
+that satisfy the spec below on their own.
+
+=:billing-day= is a plain integer, 1--31, rather than a full anchor date.
+An earlier version stored a full ISO date so the next charge could in
+principle be derived for any cadence uniformly, but nothing in the app
+actually computes next-occurrence dates yet, and in practice what a user
+wants to see and enter is "which day of the month it bills," not a specific
+calendar date that happens to recur. This does mean day 31 doesn't exist in
+every month --- deliberately not solved here; if/when real date-math lands
+(e.g. a "next charge" calculation), it can decide how to clamp/roll that
+case then, with real requirements in view instead of a guess now.
+
+=:status= exists so a subscription can become =:cancelled= without being
+deleted --- the point is to keep spending history intact rather than lose
+it, per the app's original "track and view" goal.
+
+The spec below uses unqualified keys (=s/keys :req-un=/=:opt-un=) because the
+app's maps use plain keywords (=:id=, =:name=, ...) rather than namespaced
+ones (=:subscription/id=) --- no translation is needed between the maps as
+stored and the maps as validated. There is deliberately no foreign-key check
+tying =:account-id= to a real entry in =:accounts=; see the notes next to
+=events.cljs= for how =::remove-account= keeps that reference from dangling
+instead.
+
+=:color= lives on a *category*, not on the subscription. Asking for a color
+per subscription would mean choosing one for every single entry; keying it
+by category instead means related subscriptions (e.g. everything tagged
+"streaming") share a color automatically, and it's chosen once. Categories
+stay freeform strings on the subscription itself (no separate id, no
+add/remove events) --- =:categories= is just a lookup map from category name
+to its metadata, populated lazily as categories get used (see
+=events.cljs='s =register-category=), not a managed collection with its own
+lifecycle.
+
 #+BEGIN_SRC clojure :tangle src/subscription_tracker/db.cljs
 (ns subscription-tracker.db
   (:require [cljs.spec.alpha :as s]))
@@ -153,21 +303,21 @@ File path: =src/subscription_tracker/db.cljs=
    :cost 0
    :frequency :monthly            ;; #{:weekly :monthly :quarterly :yearly :custom}
    :custom-interval-days nil
-   :billing-date nil
+   :billing-day nil               ;; 1-31, day of the month it bills on
    :status :active                ;; #{:active :paused :cancelled}
    :account-id nil                ;; references an entry in :accounts
    :start-date nil
-   :category nil
+   :category nil                  ;; freeform, lowercased on save; see :categories
    :auto-renew? true
    :url nil
-   :color nil
    :notes nil
    :created-at nil
    :updated-at nil})
 
 (def default-db
   {:subscriptions {}              ;; map of id -> subscription entity
-   :accounts      {}})            ;; map of id -> account entity
+   :accounts      {}              ;; map of id -> account entity
+   :categories    {}})            ;; map of category name -> {:color ...}
 
 ;; -- Spec ------------------------------------------------------------------
 ;; Fields shared between entities
@@ -193,29 +343,47 @@ File path: =src/subscription_tracker/db.cljs=
 (s/def ::cost number?)
 (s/def ::frequency #{:weekly :monthly :quarterly :yearly :custom})
 (s/def ::custom-interval-days (s/nilable pos-int?))
-(s/def ::billing-date string?)
+(s/def ::billing-day (s/int-in 1 32))
 (s/def ::status #{:active :paused :cancelled})
 (s/def ::account-id (s/nilable string?))
 (s/def ::start-date (s/nilable string?))
 (s/def ::category (s/nilable string?))
 (s/def ::auto-renew? boolean?)
 (s/def ::url (s/nilable string?))
-(s/def ::color (s/nilable string?))
 
 (s/def ::subscription
-  (s/keys :req-un [::id ::name ::cost ::frequency ::billing-date ::status]
+  (s/keys :req-un [::id ::name ::cost ::frequency ::billing-day ::status]
           :opt-un [::custom-interval-days ::account-id ::start-date ::category
-                   ::auto-renew? ::url ::color ::notes ::created-at ::updated-at]))
+                   ::auto-renew? ::url ::notes ::created-at ::updated-at]))
 
 (s/def ::subscriptions (s/map-of ::id ::subscription))
+
+;; Category colors
+
+(s/def ::category-name string?)
+(s/def ::color (s/nilable string?))
+
+(s/def ::category-info
+  (s/keys :opt-un [::color]))
+
+(s/def ::categories (s/map-of ::category-name ::category-info))
 
 ;; Whole app-db
 
 (s/def ::db
-  (s/keys :req-un [::subscriptions ::accounts]))
+  (s/keys :req-un [::subscriptions ::accounts ::categories]))
 #+END_SRC
 ** NS: subscription-tracker.localstorage
 File path: =src/subscription_tracker/localstorage.cljs=
+
+Persistence uses =pr-str=/=cljs.reader/read-string= (edn) rather than JSON.
+Edn round-trips ClojureScript data --- keywords, keyword values like
+=:monthly= / =:active=, =nil= --- losslessly; JSON would need a translation
+layer (stringifying/parsing keywords, deciding on a null convention) for no
+real benefit, since nothing outside this app needs to read the stored value.
+=cljs.reader/read-string= is used instead of raw =js/eval= specifically
+because it is a /data/ reader --- it cannot execute code, so a corrupted or
+tampered =localStorage= entry can fail to parse but never do anything worse.
 
 #+BEGIN_SRC clojure :tangle src/subscription_tracker/localstorage.cljs
 (ns subscription-tracker.localstorage
@@ -239,9 +407,45 @@ File path: =src/subscription_tracker/localstorage.cljs=
 ** NS: subscription-tracker.events
 File path: =src/subscription_tracker/events.cljs=
 
+=check-spec-interceptor= is placed /before/ =->local-store= in
+=mutating-interceptors=. Interceptor after-phase functions run in reverse
+list order, so that ordering actually means =->local-store='s =:after= runs
+first, saving to =localStorage= before the spec check's =:after= gets a
+chance to throw. This mirrors the standard re-frame todo-mvc reference
+implementation's ordering; a spec violation still throws and surfaces
+immediately either way (the bad write to =app-db= already happened by the
+time either interceptor runs), so this is flagged rather than "fixed" ---
+reordering would diverge from the well-known community pattern for a benefit
+that is mostly theoretical at this app's scale.
+
+=::remove-account= cascades --- it clears =:account-id= on any subscription
+pointing at the deleted account --- while =::remove-subscription= does not
+touch =:accounts=, because the dependency only runs one direction: a
+subscription optionally /references/ an account, but an account has no
+reference back, so deleting a subscription can't orphan anything. This was a
+deliberate UX choice: auto-clearing the reference (with a confirmation
+prompt in the UI, once built) beats forcing the user to manually unlink
+every subscription first, since an account is incidental context for a
+subscription, not something the subscription structurally depends on.
+
+=normalize-category= lower-cases =:category= on the way into =app-db=
+(applied in both =::add-subscription= and =::update-subscription=, so it's
+enforced regardless of which UI surface submits the data, present or
+future) specifically to stop "Streaming" and "streaming" from becoming two
+separate categories by accident; the view layer is responsible for
+presenting it capitalized. =register-category= then ensures =:categories=
+gets an entry (defaulting to no color) for whatever category a subscription
+just used, if it doesn't have one already --- this is what keeps
+=:categories= populated from ordinary use, with no dedicated "manage
+categories" UI required for the map to stay useful. =->local-store= now
+persists =:categories= alongside =:subscriptions=/=:accounts=, since it's
+real user data (assigned colors) that needs to survive a reload just like
+the rest.
+
 #+BEGIN_SRC clojure :tangle src/subscription_tracker/events.cljs
 (ns subscription-tracker.events
   (:require
+   [clojure.string :as str]
    [re-frame.core :as re-frame]
    [cljs.spec.alpha :as s]
    [subscription-tracker.db :as db]
@@ -267,10 +471,11 @@ File path: =src/subscription_tracker/events.cljs=
    (assoc cofx :local-store (localstorage/load-data))))
 
 (def ->local-store
-  "Persists the :subscriptions/:accounts portion of app-db to localStorage after every event."
+  "Persists the :subscriptions/:accounts/:categories portion of app-db to
+   localStorage after every event."
   (re-frame/after
    (fn [db _]
-     (localstorage/store-data! (select-keys db [:subscriptions :accounts])))))
+     (localstorage/store-data! (select-keys db [:subscriptions :accounts :categories])))))
 
 (def mutating-interceptors
   "Applied to every event that makes a significant change to app-db:
@@ -284,6 +489,20 @@ File path: =src/subscription_tracker/events.cljs=
 
 (defn- now-iso []
   (.toISOString (js/Date.)))
+
+(defn- normalize-category
+  "Lower-cases :category, if present, so casing variants don't create
+   duplicate categories."
+  [m]
+  (cond-> m (:category m) (update :category str/lower-case)))
+
+(defn- register-category
+  "Ensures `category` has an entry in :categories (defaulting to no color
+   assigned yet), if it isn't nil and doesn't have one already."
+  [db category]
+  (if category
+    (update db :categories update category #(or % {:color nil}))
+    db))
 
 ;; -- Events --------------------------------------------------------------
 
@@ -299,17 +518,23 @@ File path: =src/subscription_tracker/events.cljs=
  ::add-subscription
  mutating-interceptors
  (fn-traced [db [_ subscription]]
-            (let [id (new-id)
+            (let [subscription (normalize-category subscription)
+                  id (new-id)
                   now (now-iso)
                   entity (merge db/default-subscription subscription
                                  {:id id :created-at now :updated-at now})]
-              (assoc-in db [:subscriptions id] entity))))
+              (-> db
+                  (assoc-in [:subscriptions id] entity)
+                  (register-category (:category entity))))))
 
 (re-frame/reg-event-db
  ::update-subscription
  mutating-interceptors
  (fn-traced [db [_ id changes]]
-            (update-in db [:subscriptions id] merge changes {:updated-at (now-iso)})))
+            (let [changes (normalize-category changes)]
+              (-> db
+                  (update-in [:subscriptions id] merge changes {:updated-at (now-iso)})
+                  (register-category (:category changes))))))
 
 (re-frame/reg-event-db
  ::add-account
@@ -350,6 +575,16 @@ File path: =src/subscription_tracker/events.cljs=
 #+END_SRC
 ** NS: subscription-tracker.subs
 File path: =src/subscription_tracker/subs.cljs=
+
+Subscriptions are split into two layers, the standard re-frame convention:
+"layer 2" subs (=::subscriptions=, =::accounts=) are thin extractors that
+pull the raw map straight out of =app-db= and do nothing else, while
+"layer 3" subs (=::subscription-list=, =::subscription=, =::account-list=,
+=::account=) build on those via =:<-= input signals rather than reading
+=db= directly. Keeping the extractors separate means every derived sub ---
+including future ones, e.g. filtered/sorted views in Phase I --- shares the
+same memoized =::subscriptions=/=::accounts= reaction instead of each
+re-deriving its own path into =app-db=.
 
 #+BEGIN_SRC clojure :tangle src/subscription_tracker/subs.cljs
 (ns subscription-tracker.subs
@@ -397,15 +632,220 @@ File path: =src/subscription_tracker/subs.cljs=
 ** NS: subscription-tracker.views
 File path: =src/subscription_tracker/views.cljs=
 
+Phase A renders the subscription list read-only, straight from
+=::subs/subscription-list=, to validate the full data flow (app-db -> sub ->
+view) before layering in interaction. =subscription-card= and
+=subscription-list= are kept as separate functions so the per-card markup
+can grow (expand/edit in Phase B/C) without complicating the list's
+empty-state/iteration logic, and vice versa.
+
+Phase B adds expand/collapse. Whether a given card is expanded is purely
+presentational and never needs to be read by any other component, so it
+lives in a local Reagent atom rather than app-db --- per the plan's
+local-vs-app-db split, app-db is reserved for state that's actually shared
+(like the Phase I sort/filter controls will be). =subscription-card= becomes
+a form-2 component (an outer function that creates the =expanded?= atom
+once per mounted card, returning an inner render function closing over it)
+specifically so that atom survives re-renders of that one card instead of
+being recreated every time =app-db= changes. =subscription-details= is kept
+as its own function, and does its own =::subs/account= lookup by
+=account-id= rather than being passed a resolved account, so it only
+subscribes to (and re-renders on) the one account it actually needs, not
+the whole =::accounts= map.
+
+Phase D (built ahead of Phase C, see the roadmap note above) adds
+=subscription-form=. Its fields are kept as raw strings in local form state
+and only coerced (=js/parseFloat=/=js/parseInt=/keyword/blank->nil) at
+submit time in =form->subscription=, rather than coercing on every
+keystroke --- coercing eagerly means an in-progress edit like clearing a
+number field to retype it briefly produces an invalid intermediate value
+(e.g. =NaN=), which would either flash a =0= or fight the user's typing.
+=blank->nil= specifically matters for the optional fields because an empty
+string is still truthy in ClojureScript: =subscription-details='s
+=(when url ...)= guards would happily render an empty link/category for a
+field the user left blank if it came through as =""= instead of =nil=. The
+form doesn't yet accept an existing subscription to pre-fill --- that
+parameter gets added when Phase C actually needs it, rather than guessed at
+now.
+
+Every field is wrapped in a bare =[:label "Text" [:input ...]]= rather than
+paired via explicit =id=/=for= attributes, and styled to stack label-above-
+input with CSS alone (=.subscription-form label=). This sidesteps having to
+generate unique ids per field --- which would matter once Phase C mounts a
+second copy of this form (or a future one) on the same page and two
+=id="cost"= inputs would collide --- at the cost of relying on wrapping
+instead of an explicit association, which is fine since every field here is
+a single input. =:billing-day= is a plain 1-31 number input instead of a
+date picker (see the =db.cljs= note on why); =:category= is displayed
+capitalized via a =.category-value= CSS class rather than in the data
+itself, since the data stays lowercased for de-duplication (see
+=events.cljs=). The auto-renew checkbox reads "Will Auto-Renew" rather than
+just "Auto-renew," in both the form and the expanded detail view, so it
+reads as a description of the subscription's own behavior rather than
+something this app is going to go do.
+
 #+BEGIN_SRC clojure :tangle src/subscription_tracker/views.cljs
 (ns subscription-tracker.views
   (:require
+   [reagent.core :as r]
    [re-frame.core :as re-frame]
+   [subscription-tracker.events :as events]
    [subscription-tracker.subs :as subs]))
+
+(defn- format-frequency [{:keys [frequency custom-interval-days]}]
+  (if (= frequency :custom)
+    (str "every " custom-interval-days " days")
+    (name frequency)))
+
+(defn subscription-details
+  "Full field detail shown when a card is expanded."
+  [{:keys [billing-day start-date category auto-renew? url account-id notes]}]
+  (let [account @(re-frame/subscribe [::subs/account account-id])]
+    [:div.subscription-details
+     [:div [:span.field-label "Billing day: "] billing-day]
+     (when start-date
+       [:div [:span.field-label "Started: "] start-date])
+     (when category
+       [:div [:span.field-label "Category: "] [:span.category-value category]])
+     [:div [:span.field-label "Will Auto-Renew: "] (if auto-renew? "Yes" "No")]
+     (when account
+       [:div [:span.field-label "Account: "]
+        (str (:name account) " (••" (:last-digits account) ")")])
+     (when url
+       [:div [:span.field-label "Manage: "]
+        [:a {:href url :target "_blank" :rel "noopener noreferrer"} url]])
+     (when (seq notes)
+       [:div.subscription-notes notes])]))
+
+(defn subscription-card
+  "A single subscription; click the summary row to expand/collapse full detail."
+  [_]
+  (let [expanded? (r/atom false)]
+    (fn [{sub-name :name :keys [cost status] :as subscription}]
+      [:div.subscription-card
+       [:div.subscription-summary {:on-click #(swap! expanded? not)}
+        [:span.subscription-name sub-name]
+        [:span.subscription-cost (str "$" cost)]
+        [:span.subscription-frequency (format-frequency subscription)]
+        [:span.subscription-status (name status)]]
+       (when @expanded?
+         [subscription-details subscription])])))
+
+(defn subscription-list []
+  (let [subscriptions @(re-frame/subscribe [::subs/subscription-list])]
+    [:div.subscription-list
+     (if (empty? subscriptions)
+       [:p.empty-state "No subscriptions yet."]
+       (doall
+        (for [{:keys [id] :as subscription} subscriptions]
+          ^{:key id} [subscription-card subscription])))]))
+
+(def ^:private empty-subscription-form
+  {:name "" :cost "" :frequency :monthly :custom-interval-days ""
+   :billing-day "" :start-date "" :category "" :account-id ""
+   :auto-renew? true :url "" :notes ""})
+
+(defn- blank->nil [s]
+  (when (seq s) s))
+
+(defn- form->subscription
+  "Coerces raw string form state into the shape ::events/add-subscription expects."
+  [{:keys [name cost frequency custom-interval-days billing-day start-date
+           category account-id auto-renew? url notes]}]
+  {:name name
+   :cost (js/parseFloat cost)
+   :frequency frequency
+   :custom-interval-days (when (= frequency :custom) (js/parseInt custom-interval-days))
+   :billing-day (js/parseInt billing-day)
+   :start-date (blank->nil start-date)
+   :category (blank->nil category)
+   :account-id (blank->nil account-id)
+   :auto-renew? auto-renew?
+   :url (blank->nil url)
+   :notes (blank->nil notes)})
+
+(defn subscription-form
+  "Inline create form for a new subscription."
+  [{:keys [on-success]}]
+  (let [form (r/atom empty-subscription-form)]
+    (fn [_]
+      (let [{form-name :name :keys [cost frequency custom-interval-days
+                                     billing-day start-date category
+                                     account-id auto-renew? url notes]} @form
+            accounts @(re-frame/subscribe [::subs/account-list])]
+        [:form.subscription-form
+         {:on-submit (fn [e]
+                       (.preventDefault e)
+                       (re-frame/dispatch [::events/add-subscription (form->subscription @form)])
+                       (reset! form empty-subscription-form)
+                       (when on-success (on-success)))}
+         [:label "Name"
+          [:input {:type "text" :required true
+                   :value form-name
+                   :on-change #(swap! form assoc :name (.. % -target -value))}]]
+         [:label "Cost"
+          [:input {:type "number" :step "0.01" :required true
+                   :value cost
+                   :on-change #(swap! form assoc :cost (.. % -target -value))}]]
+         [:label "Frequency"
+          [:select {:value (name frequency)
+                    :on-change #(swap! form assoc :frequency (keyword (.. % -target -value)))}
+           (doall
+            (for [f [:weekly :monthly :quarterly :yearly :custom]]
+              ^{:key f} [:option {:value (name f)} (name f)]))]]
+         (when (= frequency :custom)
+           [:label "Interval (days)"
+            [:input {:type "number"
+                     :value custom-interval-days
+                     :on-change #(swap! form assoc :custom-interval-days (.. % -target -value))}]])
+         [:label "Billing Day (1-31)"
+          [:input {:type "number" :min "1" :max "31" :step "1" :required true
+                   :value billing-day
+                   :on-change #(swap! form assoc :billing-day (.. % -target -value))}]]
+         [:label "Start Date"
+          [:input {:type "date"
+                   :value start-date
+                   :on-change #(swap! form assoc :start-date (.. % -target -value))}]]
+         [:label "Category"
+          [:input {:type "text"
+                   :value category
+                   :on-change #(swap! form assoc :category (.. % -target -value))}]]
+         [:label "Account"
+          [:select {:value account-id
+                    :on-change #(swap! form assoc :account-id (.. % -target -value))}
+           [:option {:value ""} "No account"]
+           (doall
+            (for [{:keys [id name last-digits]} accounts]
+              ^{:key id} [:option {:value id} (str name " (••" last-digits ")")]))]]
+         [:label.checkbox-label
+          [:input {:type "checkbox" :checked auto-renew?
+                   :on-change #(swap! form assoc :auto-renew? (.. % -target -checked))}]
+          " Will Auto-Renew"]
+         [:label "Management URL"
+          [:input {:type "text"
+                   :value url
+                   :on-change #(swap! form assoc :url (.. % -target -value))}]]
+         [:label "Notes"
+          [:textarea {:value notes
+                      :on-change #(swap! form assoc :notes (.. % -target -value))}]]
+         [:button {:type "submit"} "Add subscription"]]))))
+
+(defn subscriptions-panel []
+  (let [show-form? (r/atom false)]
+    (fn []
+      [:div.subscriptions-panel
+       [:div.panel-header
+        [:h2 "Subscriptions"]
+        [:button {:type "button" :on-click #(swap! show-form? not)}
+         (if @show-form? "Cancel" "+ Add subscription")]]
+       (when @show-form?
+         [subscription-form {:on-success #(reset! show-form? false)}])
+       [subscription-list]])))
 
 (defn main-panel []
   [:div
-   [:h1 "Subscription Tracker"]])
+   [:h1 "Subscription Tracker"]
+   [subscriptions-panel]])
 #+END_SRC
 * Local Auto-tangle
 # Local Variables:
