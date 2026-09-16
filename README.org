@@ -1,0 +1,413 @@
+#+TITLE: subscription_tracker Literate Workspace
+#+PROPERTY: header-args :mkdirp yes :comments link
+#+STARTUP: fold
+
+* Project Overview
+Literate environment for =subscription_tracker=.
+
+* Configuration & Static Assets
+** Shadow-CLJS Configuration
+#+BEGIN_SRC clojure :tangle shadow-cljs.edn
+{:nrepl {:port 8777}
+
+ 
+
+ :source-paths ["src" "test"]
+
+ :dependencies
+ [[reagent "1.2.0"]
+  [re-frame "1.4.7"]
+  [day8.re-frame/tracing "0.9.2"]
+
+  [binaryage/devtools "1.0.7"]
+  [day8.re-frame/re-frame-10x "1.12.0"]]
+
+ :dev-http
+ {8280 "resources/public"
+  8290 "target/browser-test"}
+
+ :builds
+ {:app
+  {:target     :browser
+   :output-dir "resources/public/js/compiled"
+   :asset-path "/js/compiled"
+   :modules
+   {:app {:init-fn subscription-tracker.core/init}}
+   :devtools
+   {:preloads [day8.re-frame-10x.preload]}
+   :dev
+   {:compiler-options
+    {:closure-defines
+     { re-frame.trace.trace-enabled? true
+      day8.re-frame.tracing.trace-enabled? true}}}
+   :release
+   {:build-options
+    {:ns-aliases
+     {day8.re-frame.tracing day8.re-frame.tracing-stubs}}}}}}
+#+END_SRC
+
+** Package Manifest
+#+BEGIN_SRC json :tangle package.json :comments no
+{
+	"name": "subscription-tracker",
+	"scripts": {
+		"ancient": "clojure -Sdeps '{:deps {com.github.liquidz/antq {:mvn/version \"RELEASE\"}}}' -m antq.core",
+		"watch": "npx shadow-cljs watch app",
+		"release": "npx shadow-cljs release app",
+		"build-report": "npx shadow-cljs run shadow.cljs.build-report app target/build-report.html"
+	},
+	"dependencies": {
+		"react": "17.0.2",
+		"react-dom": "17.0.2"
+	},
+	"devDependencies": {
+		"shadow-cljs": "3.4.6"
+	}
+}
+#+END_SRC
+
+** HTML Host Document
+#+BEGIN_SRC html :tangle resources/public/index.html :comments no
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset='utf-8'>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>subscription_tracker</title>
+  </head>
+  <body>
+    <noscript>
+      subscription_tracker is a JavaScript app. Please enable JavaScript to continue.
+    </noscript>
+    <div id="app"></div>
+    <script src="/js/compiled/app.js"></script>
+  </body>
+</html>
+#+END_SRC
+
+** Stylesheet
+#+BEGIN_SRC css :tangle resources/public/styles.css
+/* Base Styles */
+#+END_SRC
+
+* Core Application Architecture
+** NS: subscription-tracker.config)
+File path: =src/subscription_tracker/config.cljs=
+
+Right now this is just boilerplate/template code.
+
+#+BEGIN_SRC clojure :tangle src/subscription_tracker/config.cljs
+(ns subscription-tracker.config)
+
+(def debug?
+  ^boolean goog.DEBUG)
+#+END_SRC
+** NS: subscription-tracker.core
+File path: =src/subscription_tracker/core.cljs=
+
+Right now this is just boilerplate/template code.
+
+#+BEGIN_SRC clojure :tangle src/subscription_tracker/core.cljs
+(ns subscription-tracker.core
+  (:require
+   [reagent.dom :as rdom]
+   [re-frame.core :as re-frame]
+   [subscription-tracker.events :as events]
+   [subscription-tracker.views :as views]
+   [subscription-tracker.config :as config]))
+
+(defn dev-setup []
+  (when config/debug?
+    (println "dev mode")))
+
+(defn ^:dev/after-load mount-root []
+  (re-frame/clear-subscription-cache!)
+  (let [root-el (.getElementById js/document "app")]
+    (rdom/unmount-component-at-node root-el)
+    (rdom/render [views/main-panel] root-el)))
+
+(defn init []
+  (re-frame/dispatch-sync [::events/initialize-db])
+  (dev-setup)
+  (mount-root))
+#+END_SRC
+** NS: subscription-tracker.db
+File path: =src/subscription_tracker/db.cljs=
+
+#+BEGIN_SRC clojure :tangle src/subscription_tracker/db.cljs
+(ns subscription-tracker.db
+  (:require [cljs.spec.alpha :as s]))
+
+(def default-account
+  "Shape of a single account entity: where a subscription's money comes from."
+  {:id nil
+   :name ""
+   :last-digits ""
+   :created-at nil
+   :updated-at nil})
+
+(def default-subscription
+  "Shape of a single subscription entity. See README.org schema notes."
+  {:id nil
+   :name ""
+   :cost 0
+   :frequency :monthly            ;; #{:weekly :monthly :quarterly :yearly :custom}
+   :custom-interval-days nil
+   :billing-date nil
+   :status :active                ;; #{:active :paused :cancelled}
+   :account-id nil                ;; references an entry in :accounts
+   :start-date nil
+   :category nil
+   :auto-renew? true
+   :url nil
+   :color nil
+   :notes nil
+   :created-at nil
+   :updated-at nil})
+
+(def default-db
+  {:subscriptions {}              ;; map of id -> subscription entity
+   :accounts      {}})            ;; map of id -> account entity
+
+;; -- Spec ------------------------------------------------------------------
+;; Fields shared between entities
+
+(s/def ::id string?)
+(s/def ::name string?)
+(s/def ::notes (s/nilable string?))
+(s/def ::created-at (s/nilable string?))
+(s/def ::updated-at (s/nilable string?))
+
+;; Account Spec
+
+(s/def ::last-digits string?)
+
+(s/def ::account
+  (s/keys :req-un [::id ::name ::last-digits]
+          :opt-un [::created-at ::updated-at]))
+
+(s/def ::accounts (s/map-of ::id ::account))
+
+;; Subscription Spec
+
+(s/def ::cost number?)
+(s/def ::frequency #{:weekly :monthly :quarterly :yearly :custom})
+(s/def ::custom-interval-days (s/nilable pos-int?))
+(s/def ::billing-date string?)
+(s/def ::status #{:active :paused :cancelled})
+(s/def ::account-id (s/nilable string?))
+(s/def ::start-date (s/nilable string?))
+(s/def ::category (s/nilable string?))
+(s/def ::auto-renew? boolean?)
+(s/def ::url (s/nilable string?))
+(s/def ::color (s/nilable string?))
+
+(s/def ::subscription
+  (s/keys :req-un [::id ::name ::cost ::frequency ::billing-date ::status]
+          :opt-un [::custom-interval-days ::account-id ::start-date ::category
+                   ::auto-renew? ::url ::color ::notes ::created-at ::updated-at]))
+
+(s/def ::subscriptions (s/map-of ::id ::subscription))
+
+;; Whole app-db
+
+(s/def ::db
+  (s/keys :req-un [::subscriptions ::accounts]))
+#+END_SRC
+** NS: subscription-tracker.localstorage
+File path: =src/subscription_tracker/localstorage.cljs=
+
+#+BEGIN_SRC clojure :tangle src/subscription_tracker/localstorage.cljs
+(ns subscription-tracker.localstorage
+  (:require [cljs.reader :as reader]))
+
+(def ls-key
+  "localStorage key under which the whole app's data is persisted."
+  "subscription-tracker/app-db")
+
+(defn store-data!
+  "Writes `data` into localStorage as an edn string."
+  [data]
+  (.setItem js/localStorage ls-key (pr-str data)))
+
+(defn load-data
+  "Reads previously persisted data from localStorage, if any."
+  []
+  (when-let [stored (.getItem js/localStorage ls-key)]
+    (reader/read-string stored)))
+#+END_SRC
+** NS: subscription-tracker.events
+File path: =src/subscription_tracker/events.cljs=
+
+#+BEGIN_SRC clojure :tangle src/subscription_tracker/events.cljs
+(ns subscription-tracker.events
+  (:require
+   [re-frame.core :as re-frame]
+   [cljs.spec.alpha :as s]
+   [subscription-tracker.db :as db]
+   [subscription-tracker.localstorage :as localstorage]
+   [day8.re-frame.tracing :refer-macros [fn-traced]]))
+
+;; -- Interceptors ------------------------------------------------------------
+
+(defn check-and-throw
+  "Throws an exception if `db` doesn't match the given spec."
+  [spec db]
+  (when-not (s/valid? spec db)
+    (throw (ex-info (str "Spec check failed: " (s/explain-str spec db))
+                     {:spec spec :db db}))))
+
+(def check-spec-interceptor
+  "Validates app-db against ::db/db after every event; throws if invalid."
+  (re-frame/after (partial check-and-throw ::db/db)))
+
+(re-frame/reg-cofx
+ :local-store
+ (fn [cofx _]
+   (assoc cofx :local-store (localstorage/load-data))))
+
+(def ->local-store
+  "Persists the :subscriptions/:accounts portion of app-db to localStorage after every event."
+  (re-frame/after
+   (fn [db _]
+     (localstorage/store-data! (select-keys db [:subscriptions :accounts])))))
+
+(def mutating-interceptors
+  "Applied to every event that makes a significant change to app-db:
+   validates the result against spec, then persists it to localStorage."
+  [check-spec-interceptor ->local-store])
+
+;; -- Helpers -------------------------------------------------------------
+
+(defn- new-id []
+  (str (random-uuid)))
+
+(defn- now-iso []
+  (.toISOString (js/Date.)))
+
+;; -- Events --------------------------------------------------------------
+
+(re-frame/reg-event-fx
+ ::initialize-db
+ [(re-frame/inject-cofx :local-store)
+  check-spec-interceptor
+  ->local-store]
+ (fn-traced [{:keys [local-store]} _]
+            {:db (merge db/default-db local-store)}))
+
+(re-frame/reg-event-db
+ ::add-subscription
+ mutating-interceptors
+ (fn-traced [db [_ subscription]]
+            (let [id (new-id)
+                  now (now-iso)
+                  entity (merge db/default-subscription subscription
+                                 {:id id :created-at now :updated-at now})]
+              (assoc-in db [:subscriptions id] entity))))
+
+(re-frame/reg-event-db
+ ::update-subscription
+ mutating-interceptors
+ (fn-traced [db [_ id changes]]
+            (update-in db [:subscriptions id] merge changes {:updated-at (now-iso)})))
+
+(re-frame/reg-event-db
+ ::add-account
+ mutating-interceptors
+ (fn-traced [db [_ account]]
+            (let [id (new-id)
+                  now (now-iso)
+                  entity (merge db/default-account account
+                                 {:id id :created-at now :updated-at now})]
+              (assoc-in db [:accounts id] entity))))
+
+(re-frame/reg-event-db
+ ::update-account
+ mutating-interceptors
+ (fn-traced [db [_ id changes]]
+            (update-in db [:accounts id] merge changes {:updated-at (now-iso)})))
+
+(re-frame/reg-event-db
+ ::remove-subscription
+ mutating-interceptors
+ (fn-traced [db [_ id]]
+            (update db :subscriptions dissoc id)))
+
+(re-frame/reg-event-db
+ ::remove-account
+ mutating-interceptors
+ (fn-traced [db [_ id]]
+            (-> db
+                (update :accounts dissoc id)
+                (update :subscriptions
+                        (fn [subscriptions]
+                          (reduce-kv (fn [m sub-id sub]
+                                       (assoc m sub-id
+                                              (cond-> sub
+                                                (= (:account-id sub) id)
+                                                (assoc :account-id nil))))
+                                     {} subscriptions))))))
+#+END_SRC
+** NS: subscription-tracker.subs
+File path: =src/subscription_tracker/subs.cljs=
+
+#+BEGIN_SRC clojure :tangle src/subscription_tracker/subs.cljs
+(ns subscription-tracker.subs
+  (:require
+   [re-frame.core :as re-frame]))
+
+;; -- Layer 2: extractors -----------------------------------------------------
+
+(re-frame/reg-sub
+ ::subscriptions
+ (fn [db _]
+   (:subscriptions db)))
+
+(re-frame/reg-sub
+ ::accounts
+ (fn [db _]
+   (:accounts db)))
+
+;; -- Layer 3: derived ---------------------------------------------------------
+
+(re-frame/reg-sub
+ ::subscription-list
+ :<- [::subscriptions]
+ (fn [subscriptions _]
+   (vals subscriptions)))
+
+(re-frame/reg-sub
+ ::subscription
+ :<- [::subscriptions]
+ (fn [subscriptions [_ id]]
+   (get subscriptions id)))
+
+(re-frame/reg-sub
+ ::account-list
+ :<- [::accounts]
+ (fn [accounts _]
+   (vals accounts)))
+
+(re-frame/reg-sub
+ ::account
+ :<- [::accounts]
+ (fn [accounts [_ id]]
+   (get accounts id)))
+#+END_SRC
+** NS: subscription-tracker.views
+File path: =src/subscription_tracker/views.cljs=
+
+#+BEGIN_SRC clojure :tangle src/subscription_tracker/views.cljs
+(ns subscription-tracker.views
+  (:require
+   [re-frame.core :as re-frame]
+   [subscription-tracker.subs :as subs]))
+
+(defn main-panel []
+  [:div
+   [:h1 "Subscription Tracker"]])
+#+END_SRC
+* Local Auto-tangle
+# Local Variables:
+# eval: (add-hook 'after-save-hook (lambda () (when (derived-mode-p 'org-mode) (org-babel-tangle))) nil t)
+# End:
