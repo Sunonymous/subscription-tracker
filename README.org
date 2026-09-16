@@ -15,7 +15,7 @@ not just what was intended.
 - [X] Phase A --- Read-only subscription list: render
   =::subs/subscription-list= as abbreviated cards. Validates the data flow end-to-end before any interactivity is added.
 - [X] Phase B --- Expand/collapse per card (local component state), showing full field detail.
-- [ ] Phase C --- Edit-in-place: an "Edit" toggle in the expanded card swaps to the same form used for creation, dispatching =::events/update-subscription=.
+- [X] Phase C --- Edit-in-place: an "Edit" toggle in the expanded card swaps to the same form used for creation, dispatching =::events/update-subscription=.
 - [X] Phase D --- Create: an inline "+ Add subscription" form at the top of the list, dispatching =::events/add-subscription=. (Built ahead of Phase C: with no data at all, there was nothing to verify Phase B against, and this form is what Phase C will reuse for editing anyway.)
 - [ ] Phase E --- Delete: a control plus confirm step, dispatching =::events/remove-subscription=.
 - [ ] Phase F --- Accounts: mirror B--E for accounts, including delete confirmation copy that reflects the =::events/remove-account= unlink-cascade.
@@ -194,12 +194,25 @@ not just what was intended.
   gap: 0.4rem;
 }
 
-.subscription-form button {
+.form-actions {
+  display: flex;
+  gap: 0.5rem;
   align-self: flex-start;
 }
 
 .category-value {
   text-transform: capitalize;
+}
+
+.edit-toggle {
+  margin-top: 0.5rem;
+}
+
+.field-modified {
+  border-left: 3px solid #f0ad4e;
+  background: rgba(240, 173, 78, 0.1);
+  padding-left: 0.5rem;
+  border-radius: 2px;
 }
 #+END_SRC
 
@@ -262,6 +275,21 @@ every month --- deliberately not solved here; if/when real date-math lands
 (e.g. a "next charge" calculation), it can decide how to clamp/roll that
 case then, with real requirements in view instead of a guess now.
 
+"Which day" doesn't mean the same thing for every =:frequency=, though:
+=:monthly=/=:quarterly=/=:yearly= all recur on a day-of-month, but
+=:weekly= recurs on a day-of-week (there is no "day 31" of a week), and
+=:custom= isn't anchored to a calendar position at all --- it's fully
+described by =:custom-interval-days=. Rather than force one field to mean
+three different things, there are two optional, mutually-exclusive fields:
+=:billing-day= (1--31, for the month-based cadences) and
+=:billing-weekday= (a day-of-week keyword, for =:weekly=); neither applies
+to =:custom=. Both are =s/nilable= --- every subscription always has both
+*keys* present (via the =default-subscription= merge), just with the
+irrelevant one's value left =nil= --- and =billing-info-valid?= below
+enforces that the *relevant* one is actually filled in for a given
+=:frequency=, so this stays a real constraint rather than two fields that
+are technically optional and easy to forget.
+
 =:status= exists so a subscription can become =:cancelled= without being
 deleted --- the point is to keep spending history intact rather than lose
 it, per the app's original "track and view" goal.
@@ -303,7 +331,8 @@ lifecycle.
    :cost 0
    :frequency :monthly            ;; #{:weekly :monthly :quarterly :yearly :custom}
    :custom-interval-days nil
-   :billing-day nil               ;; 1-31, day of the month it bills on
+   :billing-day nil               ;; 1-31; monthly/quarterly/yearly only
+   :billing-weekday nil           ;; day-of-week keyword; weekly only
    :status :active                ;; #{:active :paused :cancelled}
    :account-id nil                ;; references an entry in :accounts
    :start-date nil
@@ -343,7 +372,9 @@ lifecycle.
 (s/def ::cost number?)
 (s/def ::frequency #{:weekly :monthly :quarterly :yearly :custom})
 (s/def ::custom-interval-days (s/nilable pos-int?))
-(s/def ::billing-day (s/int-in 1 32))
+(s/def ::billing-day (s/nilable (s/int-in 1 32)))
+(s/def ::billing-weekday
+  (s/nilable #{:sunday :monday :tuesday :wednesday :thursday :friday :saturday}))
 (s/def ::status #{:active :paused :cancelled})
 (s/def ::account-id (s/nilable string?))
 (s/def ::start-date (s/nilable string?))
@@ -351,10 +382,22 @@ lifecycle.
 (s/def ::auto-renew? boolean?)
 (s/def ::url (s/nilable string?))
 
+(defn- billing-info-valid?
+  "Monthly/quarterly/yearly need :billing-day; weekly needs
+   :billing-weekday; custom needs neither (:custom-interval-days alone
+   describes it)."
+  [{:keys [frequency billing-day billing-weekday]}]
+  (case frequency
+    :weekly (some? billing-weekday)
+    :custom true
+    (some? billing-day)))
+
 (s/def ::subscription
-  (s/keys :req-un [::id ::name ::cost ::frequency ::billing-day ::status]
-          :opt-un [::custom-interval-days ::account-id ::start-date ::category
-                   ::auto-renew? ::url ::notes ::created-at ::updated-at]))
+  (s/and (s/keys :req-un [::id ::name ::cost ::frequency ::status]
+                 :opt-un [::custom-interval-days ::billing-day ::billing-weekday
+                          ::account-id ::start-date ::category
+                          ::auto-renew? ::url ::notes ::created-at ::updated-at])
+         billing-info-valid?))
 
 (s/def ::subscriptions (s/map-of ::id ::subscription))
 
@@ -684,13 +727,57 @@ just "Auto-renew," in both the form and the expanded detail view, so it
 reads as a description of the subscription's own behavior rather than
 something this app is going to go do.
 
+Phase C reuses =subscription-form= wholesale for editing rather than
+building a second form, exactly as planned: it now takes an optional
+=:initial= subscription, and =subscription->form= (the inverse of
+=form->subscription=) seeds the local form atom from it. Whether submitting
+dispatches =::events/add-subscription= or =::events/update-subscription= is
+decided by whether =(:id initial)= is present, so the same submit handler
+serves both modes without the caller having to specify which. In
+=subscription-card=, a second local atom, =editing?=, gates rendering
+=subscription-form= in place of =subscription-details= inside the already-
+expanded card --- kept separate from =expanded?= so collapsing the card
+doesn't implicitly need to know about edit state, and vice versa. The
+"Cancel" button only shows up when =:initial= is set, since the create flow
+already has its own cancel (the "+ Add subscription" toggle in
+=subscriptions-panel=); edit mode has no such toggle wrapping it, so the
+form needs to be able to back out of itself.
+
+=:billing-day= and =:billing-weekday= (see the =db.cljs= note on why
+there are two) are rendered as separate, mutually-exclusive fields: the
+day-of-month number input shows only for =:monthly=/=:quarterly=/=:yearly=,
+a day-of-week =<select>= shows only for =:weekly=, and neither shows for
+=:custom= (which only needs =:custom-interval-days=) --- the same
+show/hide-by-=:frequency= pattern already used for the interval field.
+
+Editing now also marks which fields have changed from their original value,
+for a quick visual summary of what's about to be saved. =initial-form= is
+computed once, in the outer half of the form-2 component (alongside where
+=form= itself is seeded), from the same =subscription->form= used to seed
+=form= --- comparing coerced form-string values against each other (rather
+than the raw subscription against raw form state) avoids false positives
+from type differences like =9.99= vs. ="9.99"=. =modified?= is nil-safe by
+construction: when there's no =:initial= (create mode), =initial-form= is
+nil, so every field's comparison short-circuits to false and nothing gets
+marked, without needing a separate branch for create vs. edit mode.
+=form-field= exists purely to avoid repeating that conditional =:class=
+across every field; the auto-renew checkbox doesn't use it since it already
+has its own =.checkbox-label= class to combine with.
+
 #+BEGIN_SRC clojure :tangle src/subscription_tracker/views.cljs
 (ns subscription-tracker.views
   (:require
+   [clojure.string :as str]
    [reagent.core :as r]
    [re-frame.core :as re-frame]
    [subscription-tracker.events :as events]
    [subscription-tracker.subs :as subs]))
+
+;; subscription-card (below) renders subscription-form (defined further down,
+;; once it's needed for creation too) when editing --- ClojureScript compiles
+;; top-to-bottom, so this forward declaration is needed for that reference to
+;; resolve.
+(declare subscription-form)
 
 (defn- format-frequency [{:keys [frequency custom-interval-days]}]
   (if (= frequency :custom)
@@ -699,10 +786,13 @@ something this app is going to go do.
 
 (defn subscription-details
   "Full field detail shown when a card is expanded."
-  [{:keys [billing-day start-date category auto-renew? url account-id notes]}]
+  [{:keys [billing-day billing-weekday start-date category auto-renew? url
+           account-id notes]}]
   (let [account @(re-frame/subscribe [::subs/account account-id])]
     [:div.subscription-details
-     [:div [:span.field-label "Billing day: "] billing-day]
+     (cond
+       billing-day [:div [:span.field-label "Billing day: "] billing-day]
+       billing-weekday [:div [:span.field-label "Bills on: "] (str/capitalize (name billing-weekday))])
      (when start-date
        [:div [:span.field-label "Started: "] start-date])
      (when category
@@ -718,9 +808,11 @@ something this app is going to go do.
        [:div.subscription-notes notes])]))
 
 (defn subscription-card
-  "A single subscription; click the summary row to expand/collapse full detail."
+  "A single subscription; click the summary row to expand/collapse full
+   detail, and toggle editing within the expanded view."
   [_]
-  (let [expanded? (r/atom false)]
+  (let [expanded? (r/atom false)
+        editing? (r/atom false)]
     (fn [{sub-name :name :keys [cost status] :as subscription}]
       [:div.subscription-card
        [:div.subscription-summary {:on-click #(swap! expanded? not)}
@@ -729,7 +821,15 @@ something this app is going to go do.
         [:span.subscription-frequency (format-frequency subscription)]
         [:span.subscription-status (name status)]]
        (when @expanded?
-         [subscription-details subscription])])))
+         (if @editing?
+           [subscription-form {:initial subscription
+                                :on-success #(reset! editing? false)
+                                :on-cancel #(reset! editing? false)}]
+           [:div
+            [subscription-details subscription]
+            [:button.edit-toggle {:type "button"
+                                   :on-click #(reset! editing? true)}
+             "Edit"]]))])))
 
 (defn subscription-list []
   (let [subscriptions @(re-frame/subscribe [::subs/subscription-list])]
@@ -742,7 +842,7 @@ something this app is going to go do.
 
 (def ^:private empty-subscription-form
   {:name "" :cost "" :frequency :monthly :custom-interval-days ""
-   :billing-day "" :start-date "" :category "" :account-id ""
+   :billing-day "" :billing-weekday "" :start-date "" :category "" :account-id ""
    :auto-renew? true :url "" :notes ""})
 
 (defn- blank->nil [s]
@@ -750,13 +850,16 @@ something this app is going to go do.
 
 (defn- form->subscription
   "Coerces raw string form state into the shape ::events/add-subscription expects."
-  [{:keys [name cost frequency custom-interval-days billing-day start-date
-           category account-id auto-renew? url notes]}]
+  [{:keys [name cost frequency custom-interval-days billing-day billing-weekday
+           start-date category account-id auto-renew? url notes]}]
   {:name name
    :cost (js/parseFloat cost)
    :frequency frequency
    :custom-interval-days (when (= frequency :custom) (js/parseInt custom-interval-days))
-   :billing-day (js/parseInt billing-day)
+   :billing-day (when (contains? #{:monthly :quarterly :yearly} frequency)
+                  (js/parseInt billing-day))
+   :billing-weekday (when (and (= frequency :weekly) (seq billing-weekday))
+                       (keyword billing-weekday))
    :start-date (blank->nil start-date)
    :category (blank->nil category)
    :account-id (blank->nil account-id)
@@ -764,71 +867,112 @@ something this app is going to go do.
    :url (blank->nil url)
    :notes (blank->nil notes)})
 
+(defn- subscription->form
+  "Inverse of form->subscription: seeds form state from an existing subscription."
+  [{:keys [name cost frequency custom-interval-days billing-day billing-weekday
+           start-date category account-id auto-renew? url notes]}]
+  {:name name
+   :cost (str cost)
+   :frequency frequency
+   :custom-interval-days (if custom-interval-days (str custom-interval-days) "")
+   :billing-day (if billing-day (str billing-day) "")
+   :billing-weekday (if billing-weekday (name billing-weekday) "")
+   :start-date (or start-date "")
+   :category (or category "")
+   :account-id (or account-id "")
+   :auto-renew? auto-renew?
+   :url (or url "")
+   :notes (or notes "")})
+
+(defn- form-field
+  "Wraps `input` in a label, adding a `field-modified` class when `k`'s
+   current value differs from the form's initial value (edit mode only)."
+  [modified? k label-text input]
+  [:label {:class (when (modified? k) "field-modified")} label-text input])
+
 (defn subscription-form
-  "Inline create form for a new subscription."
-  [{:keys [on-success]}]
-  (let [form (r/atom empty-subscription-form)]
-    (fn [_]
-      (let [{form-name :name :keys [cost frequency custom-interval-days
-                                     billing-day start-date category
-                                     account-id auto-renew? url notes]} @form
+  "Inline form for creating a new subscription, or editing an existing one
+   when `:initial` (a subscription) is passed."
+  [{:keys [initial on-success on-cancel]}]
+  (let [form (r/atom (if initial (subscription->form initial) empty-subscription-form))
+        initial-form (when initial (subscription->form initial))]
+    (fn [{:keys [initial on-success on-cancel]}]
+      (let [current @form
+            modified? (fn [k] (and initial-form (not= (get current k) (get initial-form k))))
+            {form-name :name :keys [cost frequency custom-interval-days
+                                     billing-day billing-weekday start-date
+                                     category account-id auto-renew? url notes]} current
             accounts @(re-frame/subscribe [::subs/account-list])]
         [:form.subscription-form
          {:on-submit (fn [e]
                        (.preventDefault e)
-                       (re-frame/dispatch [::events/add-subscription (form->subscription @form)])
-                       (reset! form empty-subscription-form)
+                       (if-let [id (:id initial)]
+                         (re-frame/dispatch [::events/update-subscription id (form->subscription @form)])
+                         (re-frame/dispatch [::events/add-subscription (form->subscription @form)]))
+                       (when-not initial (reset! form empty-subscription-form))
                        (when on-success (on-success)))}
-         [:label "Name"
+         [form-field modified? :name "Name"
           [:input {:type "text" :required true
                    :value form-name
                    :on-change #(swap! form assoc :name (.. % -target -value))}]]
-         [:label "Cost"
+         [form-field modified? :cost "Cost"
           [:input {:type "number" :step "0.01" :required true
                    :value cost
                    :on-change #(swap! form assoc :cost (.. % -target -value))}]]
-         [:label "Frequency"
+         [form-field modified? :frequency "Frequency"
           [:select {:value (name frequency)
                     :on-change #(swap! form assoc :frequency (keyword (.. % -target -value)))}
            (doall
             (for [f [:weekly :monthly :quarterly :yearly :custom]]
               ^{:key f} [:option {:value (name f)} (name f)]))]]
          (when (= frequency :custom)
-           [:label "Interval (days)"
+           [form-field modified? :custom-interval-days "Interval (days)"
             [:input {:type "number"
                      :value custom-interval-days
                      :on-change #(swap! form assoc :custom-interval-days (.. % -target -value))}]])
-         [:label "Billing Day (1-31)"
-          [:input {:type "number" :min "1" :max "31" :step "1" :required true
-                   :value billing-day
-                   :on-change #(swap! form assoc :billing-day (.. % -target -value))}]]
-         [:label "Start Date"
+         (when (contains? #{:monthly :quarterly :yearly} frequency)
+           [form-field modified? :billing-day "Billing Day (1-31)"
+            [:input {:type "number" :min "1" :max "31" :step "1" :required true
+                     :value billing-day
+                     :on-change #(swap! form assoc :billing-day (.. % -target -value))}]])
+         (when (= frequency :weekly)
+           [form-field modified? :billing-weekday "Billing Weekday"
+            [:select {:value billing-weekday :required true
+                      :on-change #(swap! form assoc :billing-weekday (.. % -target -value))}
+             [:option {:value ""} "Select a day"]
+             (doall
+              (for [d [:sunday :monday :tuesday :wednesday :thursday :friday :saturday]]
+                ^{:key d} [:option {:value (name d)} (str/capitalize (name d))]))]])
+         [form-field modified? :start-date "Start Date"
           [:input {:type "date"
                    :value start-date
                    :on-change #(swap! form assoc :start-date (.. % -target -value))}]]
-         [:label "Category"
+         [form-field modified? :category "Category"
           [:input {:type "text"
                    :value category
                    :on-change #(swap! form assoc :category (.. % -target -value))}]]
-         [:label "Account"
+         [form-field modified? :account-id "Account"
           [:select {:value account-id
                     :on-change #(swap! form assoc :account-id (.. % -target -value))}
            [:option {:value ""} "No account"]
            (doall
             (for [{:keys [id name last-digits]} accounts]
               ^{:key id} [:option {:value id} (str name " (••" last-digits ")")]))]]
-         [:label.checkbox-label
+         [:label.checkbox-label {:class (when (modified? :auto-renew?) "field-modified")}
           [:input {:type "checkbox" :checked auto-renew?
                    :on-change #(swap! form assoc :auto-renew? (.. % -target -checked))}]
           " Will Auto-Renew"]
-         [:label "Management URL"
+         [form-field modified? :url "Management URL"
           [:input {:type "text"
                    :value url
                    :on-change #(swap! form assoc :url (.. % -target -value))}]]
-         [:label "Notes"
+         [form-field modified? :notes "Notes"
           [:textarea {:value notes
                       :on-change #(swap! form assoc :notes (.. % -target -value))}]]
-         [:button {:type "submit"} "Add subscription"]]))))
+         [:div.form-actions
+          [:button {:type "submit"} (if initial "Save changes" "Add subscription")]
+          (when initial
+            [:button {:type "button" :on-click #(when on-cancel (on-cancel))} "Cancel"])]]))))
 
 (defn subscriptions-panel []
   (let [show-form? (r/atom false)]
