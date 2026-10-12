@@ -35,6 +35,15 @@ up behavior:
   before submission, not just enforced by it --- likely a CSS rule on
   =:invalid=/=:user-invalid= within =.entity-form=, rather than anything
   re-frame needs to know about.
+- [ ] Reorganize each namespace's section into interleaved prose/code
+  chunks instead of one large prose block followed by one large SRC
+  block. Mechanically simple --- Org tangles multiple =#+BEGIN_SRC
+  ... :tangle same-path= blocks by concatenating them in document order,
+  so splitting a namespace into several consecutive smaller blocks (each
+  preceded by the prose that actually explains it) changes nothing about
+  the tangled output. The work is purely moving/splitting existing prose
+  paragraphs next to the right code chunk --- =views.cljs= is the biggest
+  job, since its prose has accumulated across many phases.
 
 * Configuration & Static Assets
 ** Shadow-CLJS Configuration
