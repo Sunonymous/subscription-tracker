@@ -1,3 +1,361 @@
 /* [[file:../../README.org::*Stylesheet][Stylesheet:1]] */
-/* Base Styles */
+/* -- Theme ---------------------------------------------------------------- */
+
+:root {
+  color-scheme: light dark;
+  --bg: #f7f7f8;
+  --surface: #ffffff;
+  --text: #1f2328;
+  --text-muted: #6b7280;
+  --border: #e3e5e8;
+  --danger: #dc3545;
+  --danger-contrast: #ffffff;
+  --modified: #f0ad4e;
+  --modified-bg: rgba(240, 173, 78, 0.12);
+  --focus: #3b82f6;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
+  --radius: 8px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181d;
+    --surface: #1f2228;
+    --text: #e6e8eb;
+    --text-muted: #9aa0a8;
+    --border: #2c3036;
+    --danger: #e0575e;
+    --modified-bg: rgba(240, 173, 78, 0.18);
+    --focus: #6ea8fe;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+  }
+}
+
+/* -- Base ------------------------------------------------------------------ */
+
+{
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.5;
+}
+
+#app {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+}
+
+h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 0 0 1.5rem;
+}
+
+h2 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+a {
+  color: var(--focus);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+input,
+select,
+textarea {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+input:invalid,
+select:invalid {
+  border-color: var(--danger);
+}
+
+button,
+.file-input-trigger {
+  display: inline-block;
+  padding: 0.45rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+button:hover,
+.file-input-trigger:hover {
+  background: var(--border);
+}
+
+/* -- Subscriptions --------------------------------------------------------- */
+
+.subscription-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.subscription-card {
+  padding: 1rem 1.25rem;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  border-left: 4px solid transparent;
+}
+
+.subscription-summary {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  cursor: pointer;
+}
+
+.subscription-name {
+  font-weight: 600;
+  flex: 1;
+}
+
+.subscription-cost-freq {
+  white-space: nowrap;
+}
+
+.subscription-status {
+  cursor: default;
+}
+
+.subscription-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+
+.field-label {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.subscription-notes {
+  white-space: pre-wrap;
+  color: var(--text-muted);
+}
+
+.subscription-card--cancelled {
+  opacity: 0.55;
+}
+
+.category-value {
+  text-transform: capitalize;
+}
+
+.category-swatch {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  margin-right: 0.3rem;
+}
+
+/* -- Shared entity chrome (forms, panels, empty states) -------------------- */
+
+.empty-state {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.entity-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 1.25rem;
+  margin-bottom: 1rem;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.entity-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.9rem;
+}
+
+.entity-form label.checkbox-label {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.entity-form--nested {
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  margin-bottom: 0;
+}
+
+.form-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-self: flex-start;
+}
+
+.card-actions,
+.confirm-prompt {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.danger {
+  background: var(--danger);
+  color: var(--danger-contrast);
+  border-color: var(--danger);
+}
+
+.danger:hover {
+  filter: brightness(0.92);
+}
+
+.field-modified {
+  border-left: 3px solid var(--modified);
+  background: var(--modified-bg);
+  padding-left: 0.5rem;
+  border-radius: 2px;
+}
+
+.field-modified-accent {
+  border-left: 3px solid;
+  padding-left: 0.5rem;
+  border-radius: 2px;
+}
+
+/* -- Accounts --------------------------------------------------------------- */
+
+.accounts-panel {
+  margin-top: 2rem;
+}
+
+.account-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.account-card {
+  padding: 1rem 1.25rem;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.account-summary {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  cursor: pointer;
+}
+
+.account-name {
+  font-weight: 600;
+  flex: 1;
+}
+
+.account-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+
+/* -- Stats bar, filters, data panel ------------------------------------------ */
+
+.stats-bar {
+  display: flex;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+  padding: 1rem 1.25rem;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+
+.stat-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.filter-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.data-panel {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.data-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.import-error {
+  color: var(--danger);
+  margin-top: 0.5rem;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+}
 /* Stylesheet:1 ends here */

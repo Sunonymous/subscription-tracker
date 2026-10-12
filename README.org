@@ -17,12 +17,24 @@ not just what was intended.
 - [X] Phase B --- Expand/collapse per card (local component state), showing full field detail.
 - [X] Phase C --- Edit-in-place: an "Edit" toggle in the expanded card swaps to the same form used for creation, dispatching =::events/update-subscription=.
 - [X] Phase D --- Create: an inline "+ Add subscription" form at the top of the list, dispatching =::events/add-subscription=. (Built ahead of Phase C: with no data at all, there was nothing to verify Phase B against, and this form is what Phase C will reuse for editing anyway.)
-- [ ] Phase E --- Delete: a control plus confirm step, dispatching =::events/remove-subscription=.
-- [ ] Phase F --- Accounts: mirror B--E for accounts, including delete confirmation copy that reflects the =::events/remove-account= unlink-cascade.
-- [ ] Phase G --- Category autocomplete and color assignment: a derived sub over =::db/categories= keys feeding a =<datalist>= on the subscription form, plus a way to set/change a category's =:color=.
-- [ ] Phase H --- Derived stats bar: a =subscription-tracker.util= namespace for cost normalization, plus a sub for total monthly/yearly spend and active count.
-- [ ] Phase I --- Filtering & sorting: a =:ui= app-db slice (sort key/direction, filters) plus controls; cancelled subscriptions sorted to the bottom and visually dimmed by default.
-- [ ] Phase J --- Import/export: download =:subscriptions=/=:accounts= as a file; re-validate through =::db/db= spec before merging an import back in.
+- [X] Phase E --- Delete: a control plus confirm step, dispatching =::events/remove-subscription=.
+- [X] Phase F --- Accounts: mirror B--E for accounts, including delete confirmation copy that reflects the =::events/remove-account= unlink-cascade.
+- [X] Phase G --- Category autocomplete and color assignment: a derived sub over =::db/categories= keys feeding a =<datalist>= on the subscription form, plus a way to set/change a category's =:color=.
+- [X] Phase H --- Derived stats bar: a =subscription-tracker.util= namespace for cost normalization, plus a sub for total monthly/yearly spend and active count.
+- [X] Phase I --- Filtering & sorting: a =:ui= app-db slice (sort key/direction, filters) plus controls; cancelled subscriptions sorted to the bottom and visually dimmed by default.
+- [X] Phase J --- Import/export: download =:subscriptions=/=:accounts= as a file; re-validate through =::db/db= spec before merging an import back in.
+- [X] Phase K --- Correctness/density pass from real usage: a fixed-term =:end-date= that's excluded from active-cost totals once passed; cost-sort normalized to a common period; a compact =$cost/freq= summary display with symbolic status; a cleaner import file-picker control.
+
+** Known Follow-ups
+Smaller items deliberately deferred rather than tackled mid-phase, to be
+picked up once we're focused on styling specifically rather than on wiring
+up behavior:
+
+- [X] Style invalid form inputs (e.g. a required field left blank, or one
+  failing its =min=/=max=/=step= constraint) so validation state is visible
+  before submission, not just enforced by it --- likely a CSS rule on
+  =:invalid=/=:user-invalid= within =.entity-form=, rather than anything
+  re-frame needs to know about.
 
 * Configuration & Static Assets
 ** Shadow-CLJS Configuration
@@ -106,19 +118,171 @@ not just what was intended.
 #+END_SRC
 
 ** Stylesheet
+Colors live as CSS custom properties on =:root=, redefined once under
+=@media (prefers-color-scheme: dark)=, rather than being written directly
+into each rule --- every component then reads =var(--surface)=/
+=var(--text)=/etc. instead of a hardcoded hex value, so the whole app
+retheme consistently and light/dark stay in exactly one place each. Dark
+mode follows the OS setting automatically (=color-scheme: light dark= on
+=:root= also tells native form controls, like the color/date pickers, to
+match) --- there's no toggle, no =:ui= state, and nothing to persist,
+since the OS already knows the answer and the app has no reason to
+second-guess it. Both palettes are deliberately muted rather than pure
+white-on-black or black-on-white --- the complaint that prompted this pass
+was a stark white background being hard on the eyes at night, and a pure
+black background with pure white text has the same problem in reverse
+(maximum contrast is exactly what's uncomfortable in a dark room); =--bg=/
+=--text= stay a soft off-white/near-black pair in light mode and a dark
+slate/soft-white pair in dark mode instead.
+
+Cards, forms, and the stats bar use a =var(--surface)= background plus a
+soft =var(--shadow)= for elevation instead of the =1px solid= borders they
+used before --- a shadow implies "this sits above the page" the way a
+border alone doesn't, and it's one less hardcoded color to carry between
+themes (the shadow's opacity already does the right thing in both). A few
+borders remain on purpose: =var(--border)= still underlines section
+dividers (=.subscription-details=, =.data-panel=) and outlines form
+controls, where a line genuinely separating two things reads better than
+implying one floats above the other. =.entity-form--nested= additionally
+clears its own background/shadow now, so an edit-in-place form doesn't
+paint a second surface layer on top of the card it's already inside.
+=input=/=select=/=textarea= and =button= each get one shared base rule
+instead of being restyled per section (=.entity-form=, =.filter-controls=,
+=.file-input-trigger= all used to repeat the same =padding=/=font:
+inherit=) --- now there's one definition of what a text field or a button
+looks like, and every place that needs one just gets it. =:focus-visible=
+gets a visible =var(--focus)= outline app-wide, since relying on each
+browser's own default focus ring would mean it's whatever color that
+browser happens to pick against a background it knows nothing about.
+=input:invalid=/=select:invalid= also pick up a =var(--danger)= border,
+closing out the "Known Follow-ups" item from the UI roadmap --- plain
+=:invalid= rather than =:user-invalid= (which Chrome and Safari don't
+support) at the cost of a required-but-not-yet-touched field showing red
+before the user has had a chance to fill it in, which is a minor,
+accepted quirk rather than something worth tracking real "has this field
+been touched" state in app-db just to avoid.
+
 #+BEGIN_SRC css :tangle resources/public/styles.css
-/* Base Styles */
+/* -- Theme ---------------------------------------------------------------- */
+
+:root {
+  color-scheme: light dark;
+  --bg: #f7f7f8;
+  --surface: #ffffff;
+  --text: #1f2328;
+  --text-muted: #6b7280;
+  --border: #e3e5e8;
+  --danger: #dc3545;
+  --danger-contrast: #ffffff;
+  --modified: #f0ad4e;
+  --modified-bg: rgba(240, 173, 78, 0.12);
+  --focus: #3b82f6;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
+  --radius: 8px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181d;
+    --surface: #1f2228;
+    --text: #e6e8eb;
+    --text-muted: #9aa0a8;
+    --border: #2c3036;
+    --danger: #e0575e;
+    --modified-bg: rgba(240, 173, 78, 0.18);
+    --focus: #6ea8fe;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+  }
+}
+
+/* -- Base ------------------------------------------------------------------ */
+
+{
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.5;
+}
+
+#app {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+}
+
+h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 0 0 1.5rem;
+}
+
+h2 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+a {
+  color: var(--focus);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+input,
+select,
+textarea {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+input:invalid,
+select:invalid {
+  border-color: var(--danger);
+}
+
+button,
+.file-input-trigger {
+  display: inline-block;
+  padding: 0.45rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+button:hover,
+.file-input-trigger:hover {
+  background: var(--border);
+}
+
+/* -- Subscriptions --------------------------------------------------------- */
 
 .subscription-list {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.75rem;
 }
 
 .subscription-card {
-  padding: 0.75rem 1rem;
-  border: 1px solid #ddd;
-  border-radius: 6px;
+  padding: 1rem 1.25rem;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  border-left: 4px solid transparent;
 }
 
 .subscription-summary {
@@ -133,27 +297,54 @@ not just what was intended.
   flex: 1;
 }
 
+.subscription-cost-freq {
+  white-space: nowrap;
+}
+
+.subscription-status {
+  cursor: default;
+}
+
 .subscription-details {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-  margin-top: 0.5rem;
-  padding-top: 0.5rem;
-  border-top: 1px solid #eee;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
   font-size: 0.9rem;
 }
 
 .field-label {
   font-weight: 600;
+  color: var(--text-muted);
 }
 
 .subscription-notes {
   white-space: pre-wrap;
-  color: #555;
+  color: var(--text-muted);
 }
 
+.subscription-card--cancelled {
+  opacity: 0.55;
+}
+
+.category-value {
+  text-transform: capitalize;
+}
+
+.category-swatch {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  margin-right: 0.3rem;
+}
+
+/* -- Shared entity chrome (forms, panels, empty states) -------------------- */
+
 .empty-state {
-  color: #888;
+  color: var(--text-muted);
   font-style: italic;
 }
 
@@ -164,34 +355,35 @@ not just what was intended.
   margin-bottom: 0.75rem;
 }
 
-.subscription-form {
+.entity-form {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  padding: 1rem;
+  gap: 0.6rem;
+  padding: 1.25rem;
   margin-bottom: 1rem;
-  border: 1px solid #ddd;
-  border-radius: 6px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
 }
 
-.subscription-form input,
-.subscription-form select,
-.subscription-form textarea {
-  padding: 0.4rem;
-  font: inherit;
-}
-
-.subscription-form label {
+.entity-form label {
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
   font-size: 0.9rem;
 }
 
-.subscription-form label.checkbox-label {
+.entity-form label.checkbox-label {
   flex-direction: row;
   align-items: center;
   gap: 0.4rem;
+}
+
+.entity-form--nested {
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  margin-bottom: 0;
 }
 
 .form-actions {
@@ -200,19 +392,135 @@ not just what was intended.
   align-self: flex-start;
 }
 
-.category-value {
-  text-transform: capitalize;
-}
-
-.edit-toggle {
+.card-actions,
+.confirm-prompt {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   margin-top: 0.5rem;
 }
 
+.danger {
+  background: var(--danger);
+  color: var(--danger-contrast);
+  border-color: var(--danger);
+}
+
+.danger:hover {
+  filter: brightness(0.92);
+}
+
 .field-modified {
-  border-left: 3px solid #f0ad4e;
-  background: rgba(240, 173, 78, 0.1);
+  border-left: 3px solid var(--modified);
+  background: var(--modified-bg);
   padding-left: 0.5rem;
   border-radius: 2px;
+}
+
+.field-modified-accent {
+  border-left: 3px solid;
+  padding-left: 0.5rem;
+  border-radius: 2px;
+}
+
+/* -- Accounts --------------------------------------------------------------- */
+
+.accounts-panel {
+  margin-top: 2rem;
+}
+
+.account-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.account-card {
+  padding: 1rem 1.25rem;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.account-summary {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  cursor: pointer;
+}
+
+.account-name {
+  font-weight: 600;
+  flex: 1;
+}
+
+.account-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+
+/* -- Stats bar, filters, data panel ------------------------------------------ */
+
+.stats-bar {
+  display: flex;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+  padding: 1rem 1.25rem;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+
+.stat-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.filter-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.data-panel {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.data-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.import-error {
+  color: var(--danger);
+  margin-top: 0.5rem;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
 }
 #+END_SRC
 
@@ -276,23 +584,51 @@ every month --- deliberately not solved here; if/when real date-math lands
 case then, with real requirements in view instead of a guess now.
 
 "Which day" doesn't mean the same thing for every =:frequency=, though:
-=:monthly=/=:quarterly=/=:yearly= all recur on a day-of-month, but
-=:weekly= recurs on a day-of-week (there is no "day 31" of a week), and
-=:custom= isn't anchored to a calendar position at all --- it's fully
-described by =:custom-interval-days=. Rather than force one field to mean
-three different things, there are two optional, mutually-exclusive fields:
-=:billing-day= (1--31, for the month-based cadences) and
-=:billing-weekday= (a day-of-week keyword, for =:weekly=); neither applies
-to =:custom=. Both are =s/nilable= --- every subscription always has both
+=:monthly=/=:quarterly= recur on a day-of-month alone (any given month
+works), =:weekly= recurs on a day-of-week (there is no "day 31" of a
+week), and =:custom= isn't anchored to a calendar position at all --- it's
+fully described by =:custom-interval-days=. Rather than force one field to
+mean several different things, there are three optional fields:
+=:billing-day= (1--31, for every month-based cadence) and
+=:billing-weekday= (a day-of-week keyword, for =:weekly=) are mutually
+exclusive as before; =:billing-month= (1--12) is additionally required
+alongside =:billing-day= specifically for =:yearly=, since "bills on the
+15th" genuinely doesn't say which month for something that happens once a
+year --- unlike monthly/quarterly, where every recurrence lands in a
+different month anyway, so day-of-month alone is already unambiguous. All
+four fields are =s/nilable= --- every subscription always has all four
 *keys* present (via the =default-subscription= merge), just with the
-irrelevant one's value left =nil= --- and =billing-info-valid?= below
-enforces that the *relevant* one is actually filled in for a given
-=:frequency=, so this stays a real constraint rather than two fields that
-are technically optional and easy to forget.
+irrelevant ones' values left =nil= --- and =billing-info-valid?= below
+enforces that the *relevant* ones are actually filled in for a given
+=:frequency=, so this stays a real constraint rather than fields that are
+technically optional and easy to forget. (An earlier version let =:custom=
+through with no interval at all, on the theory that
+=:custom-interval-days= alone already described it; in practice that just
+meant it was possible to add a "custom" subscription that describes
+nothing, with no feedback until =check-and-throw= rejected it against the
+spec on save. Requiring it here up front is both a more accurate
+constraint and a better UX --- see the =views.cljs= notes for the matching
+=:required= attribute on that input. =:billing-month= went through the
+same reasoning from the start, having been added once the gap was
+noticed, rather than shipped first and tightened later like
+=:custom-interval-days= was.)
 
 =:status= exists so a subscription can become =:cancelled= without being
 deleted --- the point is to keep spending history intact rather than lose
 it, per the app's original "track and view" goal.
+
+=:end-date= is for a fixed-term subscription that simply won't renew ---
+mirroring =:start-date= (same =s/nilable string?= shape, same
+=<input type="date">= origin) rather than introducing a different
+representation for "when" just because this one marks an end instead of a
+beginning. It's deliberately *not* folded into =:status=: whether a term
+has ended is a fact about a date, independent of whether anyone remembered
+to go flip the subscription to =:cancelled= once it did, and the two can
+disagree (a term can end before =:status= catches up). =subs.cljs='s
+=::active-subscriptions= and =views.cljs='s cancelled-styling both check
+=util/past-end-date?= in addition to =:status= for exactly that reason ---
+see their notes for how a subscription can display and sort like
+=:cancelled= while its stored =:status= still honestly says =:active=.
 
 The spec below uses unqualified keys (=s/keys :req-un=/=:opt-un=) because the
 app's maps use plain keywords (=:id=, =:name=, ...) rather than namespaced
@@ -311,6 +647,25 @@ add/remove events) --- =:categories= is just a lookup map from category name
 to its metadata, populated lazily as categories get used (see
 =events.cljs='s =register-category=), not a managed collection with its own
 lifecycle.
+
+Phase I adds a =:ui= slice to =default-db= for the subscription list's
+filter/sort controls (search text, status/category filters, sort key and
+direction). It's real app-db state --- both the controls bar and the list
+renderer need to read it --- but it's presentation of existing data, not
+data itself, so it deliberately has no spec entry (=s/keys= on =::db=
+ignores unrecognized keys, so this needs no change there) and =->local-store=
+in =events.cljs= already only persists =[:subscriptions :accounts
+:categories]=, so =:ui= is excluded from localStorage for free. That also
+means it resets to these defaults on every page load, which is the right
+behavior for view state (nobody expects their search box to still have
+text in it from last visit).
+
+Phase J adds =:import-error= to the same =:ui= slice, for the same reason:
+whether the last import attempt failed (and why) is shared between the
+event that does the validating and the panel that displays the result, so
+it belongs in app-db rather than a local atom --- and like the rest of
+=:ui=, it's fine to reset to =nil= on reload rather than persist, since a
+stale error from a previous session has no use.
 
 #+BEGIN_SRC clojure :tangle src/subscription_tracker/db.cljs
 (ns subscription-tracker.db
@@ -331,11 +686,13 @@ lifecycle.
    :cost 0
    :frequency :monthly            ;; #{:weekly :monthly :quarterly :yearly :custom}
    :custom-interval-days nil
-   :billing-day nil               ;; 1-31; monthly/quarterly/yearly only
+   :billing-day nil               ;; 1-31; monthly/quarterly/yearly
+   :billing-month nil             ;; 1-12; yearly only (day alone is ambiguous)
    :billing-weekday nil           ;; day-of-week keyword; weekly only
    :status :active                ;; #{:active :paused :cancelled}
    :account-id nil                ;; references an entry in :accounts
    :start-date nil
+   :end-date nil                  ;; fixed-term subscriptions only; see util/past-end-date?
    :category nil                  ;; freeform, lowercased on save; see :categories
    :auto-renew? true
    :url nil
@@ -346,7 +703,13 @@ lifecycle.
 (def default-db
   {:subscriptions {}              ;; map of id -> subscription entity
    :accounts      {}              ;; map of id -> account entity
-   :categories    {}})            ;; map of category name -> {:color ...}
+   :categories    {}              ;; map of category name -> {:color ...}
+   :ui            {:sort-by :name          ;; #{:name :cost :status}
+                    :sort-dir :asc         ;; #{:asc :desc}
+                    :status-filter nil     ;; nil (all) or a ::status
+                    :category-filter nil   ;; nil (all) or a category name
+                    :search ""             ;; substring match against :name
+                    :import-error nil}})   ;; set by ::events/import-data on failure
 
 ;; -- Spec ------------------------------------------------------------------
 ;; Fields shared between entities
@@ -373,29 +736,32 @@ lifecycle.
 (s/def ::frequency #{:weekly :monthly :quarterly :yearly :custom})
 (s/def ::custom-interval-days (s/nilable pos-int?))
 (s/def ::billing-day (s/nilable (s/int-in 1 32)))
+(s/def ::billing-month (s/nilable (s/int-in 1 13)))
 (s/def ::billing-weekday
   (s/nilable #{:sunday :monday :tuesday :wednesday :thursday :friday :saturday}))
 (s/def ::status #{:active :paused :cancelled})
 (s/def ::account-id (s/nilable string?))
 (s/def ::start-date (s/nilable string?))
+(s/def ::end-date (s/nilable string?))
 (s/def ::category (s/nilable string?))
 (s/def ::auto-renew? boolean?)
 (s/def ::url (s/nilable string?))
 
 (defn- billing-info-valid?
-  "Monthly/quarterly/yearly need :billing-day; weekly needs
-   :billing-weekday; custom needs neither (:custom-interval-days alone
-   describes it)."
-  [{:keys [frequency billing-day billing-weekday]}]
+  "Monthly/quarterly need :billing-day; yearly needs :billing-day AND
+   :billing-month (a day alone doesn't say which month); weekly needs
+   :billing-weekday; custom needs :custom-interval-days."
+  [{:keys [frequency billing-day billing-month billing-weekday custom-interval-days]}]
   (case frequency
     :weekly (some? billing-weekday)
-    :custom true
+    :yearly (and (some? billing-day) (some? billing-month))
+    :custom (some? custom-interval-days)
     (some? billing-day)))
 
 (s/def ::subscription
   (s/and (s/keys :req-un [::id ::name ::cost ::frequency ::status]
-                 :opt-un [::custom-interval-days ::billing-day ::billing-weekday
-                          ::account-id ::start-date ::category
+                 :opt-un [::custom-interval-days ::billing-day ::billing-month ::billing-weekday
+                          ::account-id ::start-date ::end-date ::category
                           ::auto-renew? ::url ::notes ::created-at ::updated-at])
          billing-info-valid?))
 
@@ -485,12 +851,64 @@ persists =:categories= alongside =:subscriptions=/=:accounts=, since it's
 real user data (assigned colors) that needs to survive a reload just like
 the rest.
 
+=::set-category-color= (Phase G) is deliberately its own event rather than
+something folded into =::update-subscription=: a category's color is
+shared by every subscription tagged with it, not a property of the one
+subscription you happen to be editing when you pick it, so it takes effect
+immediately rather than waiting on that subscription's form to be saved.
+It uses =update-in=, not =register-category='s =update ... (or % ...)=,
+because setting a color is an explicit overwrite --- there's no existing
+value to preserve the way =register-category= preserves an
+already-assigned color when a subscription merely reuses a category.
+
+Phase I's five events (search text, status filter, category filter, sort
+key, sort direction) all write to the =:ui= slice added to =default-db=
+above, and deliberately skip =mutating-interceptors=: they're not
+"significant changes" to validate or persist in the sense the rest of this
+section means it --- =:ui= has no spec entry and =->local-store= never
+looks at it anyway, so running either interceptor on every keystroke of a
+search box would just be wasted work. =::toggle-sort-dir= flips between
+=:asc=/=:desc= rather than taking an explicit value, since the only thing a
+direction control needs to do is reverse whatever it currently is; changing
+the sort key (=::set-sort-by=) deliberately leaves direction alone instead
+of resetting it to =:asc=, so re-sorting by a different column preserves
+"ascending/descending" as the user last set it rather than surprising them
+back to a default.
+
+=::import-data= (Phase J) takes the raw text of a user-selected file ---
+=views.cljs= does nothing but read the file and hand over its contents,
+since parsing and validating are decisions about /data/, not about file
+I/O, and belong here with the rest of that logic. =reader/read-string= is
+the same edn reader =localstorage.cljs= already uses, for the same
+reasons (lossless keyword/nil round-tripping, can't execute code the way
+=js/eval= could) --- an exported file is just the =->local-store= payload
+written to disk instead of localStorage, so reusing the format means
+export and import are inverses of the same serialization rather than two
+separate formats to keep in sync. Unlike every event above, =::import-data=
+deliberately does /not/ let a bad spec just throw: that's exactly the
+uncaught =check-and-throw= crash already seen once this project from stale
+data, and a hand-crafted or corrupted import file is a far more likely way
+to hit it than schema drift ever was. Instead it =merge=s the imported
+=:subscriptions=/=:accounts=/=:categories= onto the current ones (imported
+entries win on a shared id/category name, new ones are simply added,
+matching the plan's "merging an import back in" rather than replacing
+outright) into a candidate db, checks /that candidate/ against =::db/db=
+itself, and only commits it if valid --- otherwise =db= passes through
+unchanged and =:ui='s =:import-error= is set to =s/explain-str='s
+explanation instead. =mutating-interceptors= still runs on top of this (so
+a successful import is checked and persisted exactly like any other
+change), but by the time it does, =check-and-throw= is validating a db
+this event already confirmed is valid, or one it never touched --- so that
+interceptor can never actually throw here; the explicit check above is
+what turns "crash" into "see why, try again."
+
 #+BEGIN_SRC clojure :tangle src/subscription_tracker/events.cljs
 (ns subscription-tracker.events
   (:require
    [clojure.string :as str]
    [re-frame.core :as re-frame]
    [cljs.spec.alpha :as s]
+   [cljs.reader :as reader]
    [subscription-tracker.db :as db]
    [subscription-tracker.localstorage :as localstorage]
    [day8.re-frame.tracing :refer-macros [fn-traced]]))
@@ -615,6 +1033,126 @@ the rest.
                                                 (= (:account-id sub) id)
                                                 (assoc :account-id nil))))
                                      {} subscriptions))))))
+
+(re-frame/reg-event-db
+ ::set-category-color
+ mutating-interceptors
+ (fn-traced [db [_ category-name color]]
+            (update-in db [:categories (str/lower-case category-name)] assoc :color color)))
+
+(re-frame/reg-event-db
+ ::set-search
+ (fn-traced [db [_ text]]
+            (assoc-in db [:ui :search] text)))
+
+(re-frame/reg-event-db
+ ::set-status-filter
+ (fn-traced [db [_ status]]
+            (assoc-in db [:ui :status-filter] status)))
+
+(re-frame/reg-event-db
+ ::set-category-filter
+ (fn-traced [db [_ category]]
+            (assoc-in db [:ui :category-filter] category)))
+
+(re-frame/reg-event-db
+ ::set-sort-by
+ (fn-traced [db [_ sort-key]]
+            (assoc-in db [:ui :sort-by] sort-key)))
+
+(re-frame/reg-event-db
+ ::toggle-sort-dir
+ (fn-traced [db _]
+            (update-in db [:ui :sort-dir] #(if (= % :asc) :desc :asc))))
+
+(re-frame/reg-event-db
+ ::import-data
+ mutating-interceptors
+ (fn-traced [db [_ text]]
+            (try
+              (let [imported (reader/read-string text)
+                    candidate (-> db
+                                  (update :subscriptions merge (:subscriptions imported))
+                                  (update :accounts merge (:accounts imported))
+                                  (update :categories merge (:categories imported)))]
+                (if (s/valid? ::db/db candidate)
+                  (assoc candidate :ui (assoc (:ui db) :import-error nil))
+                  (assoc db :ui (assoc (:ui db) :import-error
+                                        (str "That file doesn't match the expected data shape: "
+                                             (s/explain-str ::db/db candidate))))))
+              (catch :default _
+                (assoc db :ui (assoc (:ui db) :import-error
+                                      "Couldn't read that file as subscription-tracker data."))))))
+#+END_SRC
+** NS: subscription-tracker.util
+File path: =src/subscription_tracker/util.cljs=
+
+Phase H needs to turn a subscription's cost + frequency into a comparable
+number across the whole collection (for the stats bar's monthly/yearly
+totals), which is pure arithmetic with no re-frame or app-db involvement
+--- a separate, dependency-free namespace rather than tucking it into
+=subs.cljs= keeps that math testable and reusable on its own, and keeps
+=subs.cljs= itself about reading =app-db=, not computing with it. The
+functions take the whole subscription map rather than loose
+=cost=/=frequency=/=custom-interval-days= args so call sites stay simple
+(=(util/annual-cost sub)=) instead of having to destructure and thread
+three fields through by hand. =annual-occurrences= treats a malformed
+=:custom= subscription (no positive =:custom-interval-days=) as
+contributing =0= rather than letting a stray =NaN= poison the whole sum
+--- the form doesn't currently mark that field as required, so this is a
+real case, not a hypothetical one.
+
+=past-end-date?= is the app's first bit of logic that compares stored data
+against /today/ rather than just against other fields --- added so a
+fixed-term subscription whose =:end-date= has passed stops contributing to
+the active-cost totals even if nobody remembered to flip its =:status= to
+=:cancelled=. =:start-date=/=:end-date= are both whatever an
+=<input type="date">= produces: a plain =yyyy-mm-dd= string, zero-padded,
+with no timezone component. That format happens to order identically
+whether compared lexicographically or chronologically, which is what lets
+this stay string comparison --- =compare=, not =<=, since =<= is numeric-only
+in Clojure(Script) and will warn/fail on strings (an early draft of this
+reached for =<= directly and tripped exactly that warning). =today-str=
+builds the same =yyyy-mm-dd= shape from =js/Date='s *local* getters
+(=.getFullYear=/=.getMonth=/=.getDate=) rather than reaching for
+=.toISOString= (which is UTC) ---
+comparing a local-date input against a UTC "today" could disagree about
+what day it is for several hours around midnight in any timezone that
+isn't UTC itself. This sidesteps needing any real date-parsing library for
+a single day-granularity comparison.
+
+#+BEGIN_SRC clojure :tangle src/subscription_tracker/util.cljs
+(ns subscription-tracker.util)
+
+(defn annual-occurrences
+  "How many times per year a subscription bills."
+  [{:keys [frequency custom-interval-days]}]
+  (case frequency
+    :weekly 52
+    :monthly 12
+    :quarterly 4
+    :yearly 1
+    :custom (if (and custom-interval-days (pos? custom-interval-days))
+              (/ 365 custom-interval-days)
+              0)))
+
+(defn annual-cost [subscription]
+  (* (:cost subscription) (annual-occurrences subscription)))
+
+(defn monthly-cost [subscription]
+  (/ (annual-cost subscription) 12))
+
+(defn- pad2 [n]
+  (if (< n 10) (str "0" n) (str n)))
+
+(defn- today-str []
+  (let [d (js/Date.)]
+    (str (.getFullYear d) "-" (pad2 (inc (.getMonth d))) "-" (pad2 (.getDate d)))))
+
+(defn past-end-date?
+  "True when `subscription`'s :end-date is set and has already passed."
+  [{:keys [end-date]}]
+  (and end-date (neg? (compare end-date (today-str)))))
 #+END_SRC
 ** NS: subscription-tracker.subs
 File path: =src/subscription_tracker/subs.cljs=
@@ -629,10 +1167,85 @@ including future ones, e.g. filtered/sorted views in Phase I --- shares the
 same memoized =::subscriptions=/=::accounts= reaction instead of each
 re-deriving its own path into =app-db=.
 
+Phase F adds =::subscriptions-for-account=, parameterized by an account id
+like =::subscription=/=::account= already are. It exists specifically so
+the account-delete confirmation (=views.cljs=) can say how many
+subscriptions reference the account before you commit to deleting it,
+mirroring in the UI the unlink behavior =::events/remove-account= already
+performs in =app-db=.
+
+Phase G adds a =::categories= layer-2 extractor and two layer-3 subs on
+top of it: =::category-names= (sorted keys, for the subscription form's
+autocomplete) and =::category-color=, parameterized by category name like
+=::account=/=::subscription= are by id. =::category-color= is deliberately
+its own sub rather than exposing the whole =category-info= map, since the
+view only ever needs the color, and keeping the parameter a plain name
+string (not an id) matches how =:categories= is actually keyed.
+
+Phase H adds the stats bar's three subs, all built on a new
+=::active-subscriptions= (status =:active= only --- a cancelled or paused
+subscription isn't currently costing anything, so it shouldn't count
+toward "what am I spending"). It also excludes anything
+=util/past-end-date?= flags, on the same logic: a fixed-term subscription
+past its own end date isn't actually costing anything either, whatever its
+stored =:status= still says --- see the =db.cljs= note on =:end-date= for
+why that's checked separately rather than requiring =:status= to be kept
+in sync by hand. =::total-monthly-cost=/=::total-yearly-cost=
+delegate the actual per-subscription math to =subscription-tracker.util=
+and just =reduce= it over the active list; keeping that arithmetic out of
+=subs.cljs= (see the =util.cljs= note) means these subs are purely about
+"which subscriptions, summed how," not about the cost formula itself.
+Deliberately unrelated to Phase I below: the stats bar always summarizes
+*every* active subscription, not whatever the list's current filters
+happen to be showing, so it stays on =::subscription-list=/
+=::active-subscriptions= rather than the new filtered/sorted sub.
+
+Phase I adds a =::ui= layer-2 extractor over the new =:ui= app-db slice,
+and one layer-3 sub per field (=::sort-by=, =::sort-dir=,
+=::status-filter=, =::category-filter=, =::search=) so the controls bar
+can subscribe to just the one value each control actually renders, rather
+than the whole =:ui= map and a re-render on every unrelated field change.
+=::filtered-subscriptions= is where search/filter/sort actually happen,
+built on six input signals (the raw list plus all five =:ui= fields) so it
+recomputes only when something it actually depends on changes. Filtering
+and sorting are deliberately one sub rather than two separate subs chained
+together --- an intermediate "filtered, not yet sorted" value has no use
+anywhere else, so splitting it would just add a reaction with no purpose.
+Cancelled subscriptions --- and, since =util/past-end-date?= was added,
+anything past its own =:end-date= too, even if still nominally =:active=
+--- sort to the bottom *unconditionally*, ahead of whatever
+=::sort-by=/=::sort-dir= the user picked, by comparing on
+=[cancelled-or-expired? sort-value]= pairs: =compare= on the boolean half
+already decides the ordering for any mismatched pair, so the chosen sort
+only ever breaks ties among subscriptions that agree on
+cancelled-or-expired-or-not. Search
+matches purely on a lower-cased substring of =:name=; the status and
+category filters are plain equality checks (including =nil= meaning "no
+filter," so the default --- nothing chosen yet --- naturally shows
+everything). =sort-value= resolves the actual field to compare on, with a
+fallback to name so an unrecognized =:sort-by= degrades instead of
+exploding. Sorting =:cost= uses =util/monthly-cost=, not the subscription's
+raw stored =:cost=, since the raw number is only comparable to another
+subscription's raw number when they share the same billing frequency ---
+a $35/yr subscription is cheaper overall than a $20/mo one despite the
+smaller raw number, and sorting on the unnormalized value would rank them
+backwards.
+
+Phase J adds =::export-data=, built on the same three layer-2 extractors
+as =::import-data='s merge target (=::subscriptions=/=::accounts=/
+=::categories=) so there's exactly one definition of "the data" shared by
+export, persistence, and spec validation --- it returns precisely the
+shape =::events/import-data= expects to read back, and the shape
+=->local-store= already persists. =::import-error=, by contrast, is a
+plain extractor straight off =::ui= (not its own layer-2/3 split) since
+there's nothing to derive --- it is the field.
+
 #+BEGIN_SRC clojure :tangle src/subscription_tracker/subs.cljs
 (ns subscription-tracker.subs
   (:require
-   [re-frame.core :as re-frame]))
+   [clojure.string :as str]
+   [re-frame.core :as re-frame]
+   [subscription-tracker.util :as util]))
 
 ;; -- Layer 2: extractors -----------------------------------------------------
 
@@ -645,6 +1258,11 @@ re-deriving its own path into =app-db=.
  ::accounts
  (fn [db _]
    (:accounts db)))
+
+(re-frame/reg-sub
+ ::categories
+ (fn [db _]
+   (:categories db)))
 
 ;; -- Layer 3: derived ---------------------------------------------------------
 
@@ -671,6 +1289,130 @@ re-deriving its own path into =app-db=.
  :<- [::accounts]
  (fn [accounts [_ id]]
    (get accounts id)))
+
+(re-frame/reg-sub
+ ::subscriptions-for-account
+ :<- [::subscriptions]
+ (fn [subscriptions [_ account-id]]
+   (filter #(= (:account-id %) account-id) (vals subscriptions))))
+
+(re-frame/reg-sub
+ ::category-names
+ :<- [::categories]
+ (fn [categories _]
+   (sort (keys categories))))
+
+(re-frame/reg-sub
+ ::category-color
+ :<- [::categories]
+ (fn [categories [_ category-name]]
+   (get-in categories [category-name :color])))
+
+(re-frame/reg-sub
+ ::active-subscriptions
+ :<- [::subscription-list]
+ (fn [subscriptions _]
+   (filter #(and (= (:status %) :active) (not (util/past-end-date? %))) subscriptions)))
+
+(re-frame/reg-sub
+ ::active-subscription-count
+ :<- [::active-subscriptions]
+ (fn [active _]
+   (count active)))
+
+(re-frame/reg-sub
+ ::total-monthly-cost
+ :<- [::active-subscriptions]
+ (fn [active _]
+   (reduce + 0 (map util/monthly-cost active))))
+
+(re-frame/reg-sub
+ ::total-yearly-cost
+ :<- [::active-subscriptions]
+ (fn [active _]
+   (reduce + 0 (map util/annual-cost active))))
+
+;; -- Phase I: filtering & sorting ---------------------------------------------
+
+(re-frame/reg-sub
+ ::ui
+ (fn [db _]
+   (:ui db)))
+
+(re-frame/reg-sub
+ ::sort-by
+ :<- [::ui]
+ (fn [ui _] (:sort-by ui)))
+
+(re-frame/reg-sub
+ ::sort-dir
+ :<- [::ui]
+ (fn [ui _] (:sort-dir ui)))
+
+(re-frame/reg-sub
+ ::status-filter
+ :<- [::ui]
+ (fn [ui _] (:status-filter ui)))
+
+(re-frame/reg-sub
+ ::category-filter
+ :<- [::ui]
+ (fn [ui _] (:category-filter ui)))
+
+(re-frame/reg-sub
+ ::search
+ :<- [::ui]
+ (fn [ui _] (:search ui)))
+
+(defn- sort-value
+  "Resolves the field `sort-by` actually refers to on a subscription."
+  [sort-by {sub-name :name :keys [status] :as subscription}]
+  (case sort-by
+    :cost (util/monthly-cost subscription)
+    :status (name status)
+    (str/lower-case sub-name)))
+
+(re-frame/reg-sub
+ ::filtered-subscriptions
+ :<- [::subscription-list]
+ :<- [::search]
+ :<- [::status-filter]
+ :<- [::category-filter]
+ :<- [::sort-by]
+ :<- [::sort-dir]
+ (fn [[subscriptions search status-filter category-filter sort-by sort-dir] _]
+   (let [search (str/lower-case (or search ""))
+         matches? (fn [{sub-name :name :keys [status category]}]
+                    (and (or (str/blank? search) (str/includes? (str/lower-case sub-name) search))
+                         (or (nil? status-filter) (= status status-filter))
+                         (or (nil? category-filter) (= category category-filter))))
+         inactive? (fn [sub] (or (= (:status sub) :cancelled) (util/past-end-date? sub)))
+         rank (fn [sub] [(inactive? sub) (sort-value sort-by sub)])
+         comparator (fn [a b]
+                      (let [[a-cancelled? a-val] (rank a)
+                            [b-cancelled? b-val] (rank b)]
+                        (cond
+                          (not= a-cancelled? b-cancelled?) (compare a-cancelled? b-cancelled?)
+                          (= sort-dir :desc) (compare b-val a-val)
+                          :else (compare a-val b-val))))]
+     (->> subscriptions
+          (filter matches?)
+          (sort comparator)))))
+
+;; -- Phase J: import/export ---------------------------------------------------
+
+(re-frame/reg-sub
+ ::export-data
+ :<- [::subscriptions]
+ :<- [::accounts]
+ :<- [::categories]
+ (fn [[subscriptions accounts categories] _]
+   {:subscriptions subscriptions :accounts accounts :categories categories}))
+
+(re-frame/reg-sub
+ ::import-error
+ :<- [::ui]
+ (fn [ui _] (:import-error ui)))
 #+END_SRC
 ** NS: subscription-tracker.views
 File path: =src/subscription_tracker/views.cljs=
@@ -713,7 +1455,8 @@ now.
 
 Every field is wrapped in a bare =[:label "Text" [:input ...]]= rather than
 paired via explicit =id=/=for= attributes, and styled to stack label-above-
-input with CSS alone (=.subscription-form label=). This sidesteps having to
+input with CSS alone (=.entity-form label=, generalized in Phase F once
+=account-form= needed the same styling). This sidesteps having to
 generate unique ids per field --- which would matter once Phase C mounts a
 second copy of this form (or a future one) on the same page and two
 =id="cost"= inputs would collide --- at the cost of relying on wrapping
@@ -744,11 +1487,22 @@ already has its own cancel (the "+ Add subscription" toggle in
 form needs to be able to back out of itself.
 
 =:billing-day= and =:billing-weekday= (see the =db.cljs= note on why
-there are two) are rendered as separate, mutually-exclusive fields: the
-day-of-month number input shows only for =:monthly=/=:quarterly=/=:yearly=,
-a day-of-week =<select>= shows only for =:weekly=, and neither shows for
-=:custom= (which only needs =:custom-interval-days=) --- the same
-show/hide-by-=:frequency= pattern already used for the interval field.
+there are several of these fields) are rendered as separate,
+mutually-exclusive fields: the day-of-month number input shows only for
+=:monthly=/=:quarterly=/=:yearly=, a day-of-week =<select>= shows only for
+=:weekly=, and neither shows for =:custom= (which only needs
+=:custom-interval-days=) --- the same show/hide-by-=:frequency= pattern
+already used for the interval field. =:billing-month= (added once it was
+noticed that a bare day-of-month doesn't say which month an annual charge
+lands in) is a =<select>= of month names, shown only for =:yearly= and
+required there, right above =:billing-day= so the two read together as one
+"Month, Day" control even though they're two separate form fields and two
+separate spec keys. =month-names= (a plain 12-element vector, defined next
+to =format-frequency= since both are small display-formatting helpers used
+by more than one component) backs both this select's options and
+=subscription-details='s read-only rendering of the same date, so the two
+places that turn a month number into a name can't drift out of sync with
+each other.
 
 Editing now also marks which fields have changed from their original value,
 for a quick visual summary of what's about to be saved. =initial-form= is
@@ -764,6 +1518,221 @@ marked, without needing a separate branch for create vs. edit mode.
 across every field; the auto-renew checkbox doesn't use it since it already
 has its own =.checkbox-label= class to combine with.
 
+Phase E adds a third local atom to =subscription-card=, =confirming?=,
+rather than deleting on the first click. Clicking "Delete" doesn't dispatch
+anything yet --- it swaps the Edit/Delete buttons for an inline "Delete
+this subscription? [Delete] [Cancel]" row, and only *that* second click
+dispatches =::events/remove-subscription=. This is a plain local toggle
+rather than a =js/confirm= dialog specifically so Phase F can swap in
+richer, cascade-aware copy for accounts without changing the mechanism.
+There's no need to reset =confirming?= back to false after a successful
+delete --- the dispatch removes the entity from =::subs/subscription-list=,
+so the whole card (and its local state) just unmounts.
+
+Phase F mirrors B--E for accounts (=account-card=, =account-details=,
+=account-form=, =account-list=, =accounts-panel=) using the exact same
+shapes --- =form-field=, the =modified?= closure, the three-way
+=expanded?=/=editing?=/=confirming?= local-atom =cond=, all reused as-is,
+since accounts are just a smaller entity (two fields) going through the
+same lifecycle. The one genuinely new piece is the delete confirmation
+copy: it subscribes to =::subs/subscriptions-for-account= for the account
+being deleted and, when that's non-empty, says how many subscriptions will
+be unlinked (not deleted) rather than a bare "are you sure," so the
+cascade =::events/remove-account= already performs isn't a surprise. The
+form-chrome CSS (label stacking, input padding, the checkbox-label
+override, form-actions) was generalized from =.subscription-form= to
+=.entity-form= so =account-form= doesn't need its own copy of it; the
+card/summary/details/list chrome stayed duplicated under =.account-*=
+names instead of also being generalized, since that's a handful of short
+rules where a second, clearly-named copy reads better than a shared class
+whose name no longer matches what it's styling.
+
+Phase G wires up the =:categories= map built up since Phase F's precursor:
+a =<datalist>= on the category input, fed by =::subs/category-names=, for
+autocomplete, and a color picker tied to =::events/set-category-color= so
+assigning a color takes effect immediately rather than waiting on the
+subscription form's own submit. The =<datalist>='s =id= is generated once
+per form instance (=datalist-id=, via =random-uuid= in the outer half of
+the component) rather than hardcoded, for the same reason labels avoid
+=id=/=for= pairing --- more than one =subscription-form= can be mounted at
+once (the create form plus any card currently being edited), and a
+hardcoded id would collide across them. The color picker only appears once
+a category is actually typed (=category-key=, the lower-cased form of
+whatever's in the field, matching how =:categories= is keyed), and it
+intentionally isn't wrapped in =form-field='s =modified?= tracking ---
+unlike every other field here, a category's color isn't a property of
+*this* subscription being edited, so "modified since this subscription's
+initial state" isn't a meaningful question for it. The same color now
+accents =subscription-card= (a =border-left=, applied inline since it's
+per-subscription dynamic data, not something a static CSS rule could know)
+and shows as a small swatch next to the category text in
+=subscription-details=, so assigning it actually has a visible payoff
+instead of just sitting in =app-db= unused. The =<datalist>='s options use
+=(str/capitalize c)= rather than the raw (lower-cased) category name, so
+the suggestions read the same capitalized way =.category-value= already
+displays categories elsewhere --- this is safe to do on the =<option>='s
+=value= itself (rather than needing a separate =label= attribute, which
+browsers disagree on whether to even show) because selecting a suggestion
+just fills the input with that capitalized text, and =normalize-category=
+lower-cases it again on submit regardless of what case the user typed or
+picked.
+
+Both forms also pick up an =entity-form--nested= modifier class whenever
+=:initial= is set --- i.e. whenever the form is rendered in place of a
+card's own details rather than standalone above a list. Only the create
+form actually sits in open space where =.entity-form='s border/padding
+read as a distinct box; the edit-in-place form is already inside its
+card's border, so the full box treatment just reads as a border nested
+inside a border. The modifier strips the border, padding, and bottom
+margin for that case, keeping the standalone create form unchanged.
+
+Two bugfixes landed together, since both touch the edit lifecycle:
+
+Collapsing a card while editing used to silently discard the in-progress
+draft (=subscription-form='s local =form= atom unmounts along with the
+rest of the =(when @expanded? ...)= block) while leaving =editing?= --- a
+separate atom, owned by the card, that survives the collapse --- still
+true. Re-expanding then remounted the form fresh but still "in edit mode,"
+which is the confusing half-state that was reported. Rather than lift the
+draft up into the card so it could survive being unmounted (a real
+architecture change for an edit-session-persistence feature nothing else
+in this app does), the summary row's click now simply does nothing while
+=@editing?= is true (=:on-click #(when-not @editing? ...)=, with the
+cursor switched to =default= to match) --- collapsing while editing is no
+longer possible, so there's nothing left to silently discard that way.
+
+The only remaining way to lose a draft is the form's own "Cancel" button,
+which now checks a =dirty?= flag (=current= vs. =initial-form=, the same
+values =modified?= already compares per-field) before acting: if nothing
+changed it cancels immediately as before, but if there are unsaved edits
+it shows an inline "Discard unsaved changes? [Discard] [Keep Editing]"
+row instead --- reusing the same =.confirm-prompt= styling as the
+delete-confirmation (renamed from =.confirm-delete= to =.confirm-prompt=
+now that a second, non-delete use exists for it).
+
+=form-field= also now takes an optional =accent-color=: when the field is
+modified /and/ a color is supplied, it uses =.field-modified-accent=
+(just a colored left border, no fixed background) with that color inline,
+instead of the generic =.field-modified= orange. =subscription-form=
+passes its live =category-color= (the same value driving the color picker
+and the card's own accent border) to every field; an arbitrary
+user-chosen category color no longer visually fights with a hardcoded
+orange "this changed" indicator. =account-form= has no category concept,
+so its =form-field= calls stay 4-arity and keep the plain orange fallback
+unchanged.
+
+Phase H's =stats-bar= sits at the top of =main-panel=, above both panels,
+since it summarizes the whole collection rather than belonging to either
+one. The three numbers are plain subscribes to the Phase H subs --- no
+formatting logic lives in =subs.cljs=, so =.toFixed 2= here is what turns
+possibly-messy floating point sums (e.g. =42.470000000000006=, from adding
+a run of =:cost= values) into a stable two-decimal string; the active
+count needs no such treatment since =count= is already an integer.
+
+Phase I adds =filter-controls=, a small component rendered inside
+=subscriptions-panel= between the add-form toggle and the list itself,
+holding the search box plus the status/category/sort-by selects and the
+sort-direction toggle button. It's a plain function component (no local
+state of its own) --- every value it shows and every change it makes goes
+straight through the =::subs/*= subs and =::events/*= events added above,
+since (unlike a card's =expanded?=/=editing?=) this state is shared with
+=subscription-list=, not private to one component. The category filter's
+=<select>= reuses =::subs/category-names=, the same sub already feeding
+the subscription form's autocomplete =<datalist>=, so there's exactly one
+place that knows how to list known categories. =subscription-list= now
+subscribes to =::subs/filtered-subscriptions= instead of the raw
+=::subs/subscription-list=, but still separately checks the raw list too,
+so it can tell "nothing's been added yet" (=No subscriptions yet.=) apart
+from "something's been added, but the current filters hide all of it"
+(=No subscriptions match the current filters.=) --- the first is an
+empty-state the user shouldn't be able to fix by changing a filter, the
+second is, so they read as two different messages rather than one generic
+empty-state covering both.
+
+=subscription-card= now also marks cancelled subscriptions with a
+=subscription-card--cancelled= class (visual dimming, in CSS below). This
+is unconditional, not a filter the controls bar can toggle off --- a
+cancelled subscription sorting to the bottom and reading as visually
+de-emphasized is meant to be the list's permanent default presentation
+(per the original plan), independent of whatever =::subs/status-filter=
+is currently narrowing the list to; even filtering down to "show only
+cancelled," every card shown is still dimmed, which is consistent rather
+than contradictory since dimming communicates the subscription's own
+state, not its relationship to the current filter.
+
+Phase J adds =data-panel=, a small utility section at the bottom of
+=main-panel= --- below both entity panels rather than alongside them,
+since exporting/importing the whole dataset at once is a maintenance
+action, not part of the everyday "look at my subscriptions" flow the rest
+of the page is organized around. =export-data!= is plain browser interop
+(=js/Blob=, an object URL, a synthetically-clicked, never-attached =<a
+download>=) rather than anything re-frame needs to know about, since
+triggering a file download has no app-db state to manage --- it just
+serializes whatever =::subs/export-data= currently holds with =pr-str=,
+the same edn format =localstorage.cljs= already uses, and hands it to the
+browser. The filename's date suffix is just so repeated exports taken on
+different days don't silently overwrite each other in a downloads folder.
+Import is the mirror image: a bare file =<input>=, with no visible
+styling of its own, whose =on-change= reads the selected file via
+=js/FileReader= and dispatches =::events/import-data= with the raw text
+once it loads --- the view's job ends at "get the bytes," everything about
+whether those bytes are valid subscription-tracker data happens in the
+event (see the =events.cljs= note). Resetting the input's own =.-value=
+after dispatch (rather than, say, disabling it) is what allows re-selecting
+the exact same file again after fixing and re-exporting it, since a
+browser file input doesn't fire =on-change= a second time for an unchanged
+selection otherwise. =::subs/import-error= is rendered directly below the
+controls when non-nil; there's no corresponding success banner, since a
+successful import's own effect --- the imported subscriptions/accounts
+appearing in the lists above --- already is the confirmation.
+
+Phase K is a pass driven entirely by using the app on real data rather
+than a new roadmap item: a fixed-term =:end-date= (mirroring
+=:start-date=; see the =db.cljs= note), a fix to cost-based sorting, and a
+denser, more scannable =subscription-summary= row, plus a small
+file-picker cleanup.
+
+=subscription-details= gains an =:end-date= row, right under "Started,"
+following the exact pattern already used for every other optional field
+here.
+
+The summary row's three separate =.subscription-cost=/
+=.subscription-frequency=/=.subscription-status= spans collapse into two:
+=format-cost-frequency= combines cost and frequency into one
+=$cost/shorthand= string (=frequency-shorthand= maps each =:frequency= to
+a short unit --- =wk=/=mo=/=3mo=/=yr=, or =Nd= for =:custom=, matching
+=:custom-interval-days=), with a parenthetical =(~$X.XX/mo)= appended
+whenever that frequency isn't already monthly, so the "is this actually
+cheaper" comparison from the =util.cljs= cost-normalization work is
+visible at a glance instead of requiring mental math. =status-symbol=
+replaces the =(name status)= text with a single glyph per status (↻ for
+active, ⏸ for paused, ⊘ for cancelled) to save horizontal space; rather
+than add a header row to explain them, each symbol carries a =:title=
+attribute (=status-title=) so the meaning is one hover away without
+costing any layout space, which is enough for a single-user tool that
+isn't trying to be self-explanatory to a stranger. An =:active=
+subscription that's =util/past-end-date?= gets =↻?= instead of plain =↻=
+--- the =?= is a deliberate, visible flag that something doesn't add up
+(the data still honestly says "active," but the date says otherwise),
+rather than silently re-labeling it or hiding the discrepancy. That same
+"acts cancelled" condition --- =:status= of =:cancelled= *or*
+=util/past-end-date?= --- now also decides =subscription-card='s dimming
+class, mirroring the identical check that =subs.cljs='s
+=::filtered-subscriptions= already uses to sort it to the bottom, so a
+past-end-date subscription reads consistently (badge, dimming, and sort
+position all agreeing) without =:status= itself ever being touched.
+
+The import control is restyled rather than left as a bare =<input
+type="file">=: the real input is visually hidden (clipped to =1px=, not
+=display: none=, so it stays focusable/usable) and a =<label for=...>=
+styled to look clickable stands in for it, reading "Import Data." A
+=<label for>= click still opens the native file picker and still fires
+the hidden input's =on-change= exactly as before --- this is purely a
+skin over the same mechanism from Phase J, not a behavior change --- and
+it has the side effect of making the browser's own "No file chosen" text
+disappear along with the rest of the native control's chrome, which is
+what prompted the change in the first place.
+
 #+BEGIN_SRC clojure :tangle src/subscription_tracker/views.cljs
 (ns subscription-tracker.views
   (:require
@@ -771,32 +1740,84 @@ has its own =.checkbox-label= class to combine with.
    [reagent.core :as r]
    [re-frame.core :as re-frame]
    [subscription-tracker.events :as events]
-   [subscription-tracker.subs :as subs]))
+   [subscription-tracker.subs :as subs]
+   [subscription-tracker.util :as util]))
 
-;; subscription-card (below) renders subscription-form (defined further down,
-;; once it's needed for creation too) when editing --- ClojureScript compiles
-;; top-to-bottom, so this forward declaration is needed for that reference to
-;; resolve.
+;; subscription-card/account-card (below) render subscription-form/
+;; account-form (defined further down) when editing --- ClojureScript
+;; compiles top-to-bottom, so these forward declarations are needed for
+;; those references to resolve.
 (declare subscription-form)
+(declare account-form)
 
-(defn- format-frequency [{:keys [frequency custom-interval-days]}]
-  (if (= frequency :custom)
-    (str "every " custom-interval-days " days")
-    (name frequency)))
+(def ^:private month-names
+  ["January" "February" "March" "April" "May" "June"
+   "July" "August" "September" "October" "November" "December"])
+
+(defn- frequency-shorthand
+  "Compact unit for the combined cost/frequency display, e.g. \"mo\" in
+   \"$9.99/mo\"."
+  [{:keys [frequency custom-interval-days]}]
+  (case frequency
+    :weekly "wk"
+    :monthly "mo"
+    :quarterly "3mo"
+    :yearly "yr"
+    :custom (str custom-interval-days "d")))
+
+(defn- format-cost-frequency
+  "\"$cost/shorthand\", plus a parenthetical normalized monthly estimate
+   for anything that doesn't already bill monthly --- see the note above
+   this component for why."
+  [{:keys [cost frequency] :as subscription}]
+  (let [base (str "$" (.toFixed cost 2) "/" (frequency-shorthand subscription))]
+    (if (= frequency :monthly)
+      base
+      (str base " (~$" (.toFixed (util/monthly-cost subscription) 2) "/mo)"))))
+
+(defn- status-symbol
+  "Compact glyph for :status, with a trailing \"?\" when an :active
+   subscription is past its own :end-date --- see the note above this
+   component."
+  [{:keys [status] :as subscription}]
+  (case status
+    :active (if (util/past-end-date? subscription) "↻?" "↻")
+    :paused "⏸"
+    :cancelled "⊘"))
+
+(defn- status-title
+  "Hover text for `status-symbol`, standing in for a header/legend row."
+  [{:keys [status] :as subscription}]
+  (case status
+    :active (if (util/past-end-date? subscription)
+              "Active, but past its end date --- check this"
+              "Active")
+    :paused "Paused"
+    :cancelled "Cancelled"))
 
 (defn subscription-details
   "Full field detail shown when a card is expanded."
-  [{:keys [billing-day billing-weekday start-date category auto-renew? url
-           account-id notes]}]
-  (let [account @(re-frame/subscribe [::subs/account account-id])]
+  [{:keys [frequency billing-day billing-month billing-weekday start-date
+           end-date category auto-renew? url account-id notes]}]
+  (let [account @(re-frame/subscribe [::subs/account account-id])
+        category-color @(re-frame/subscribe [::subs/category-color category])]
     [:div.subscription-details
      (cond
+       (and (= frequency :yearly) billing-month billing-day)
+       [:div [:span.field-label "Billing date: "]
+        (str (nth month-names (dec billing-month)) " " billing-day)]
+
        billing-day [:div [:span.field-label "Billing day: "] billing-day]
        billing-weekday [:div [:span.field-label "Bills on: "] (str/capitalize (name billing-weekday))])
      (when start-date
        [:div [:span.field-label "Started: "] start-date])
+     (when end-date
+       [:div [:span.field-label "Ends: "] end-date])
      (when category
-       [:div [:span.field-label "Category: "] [:span.category-value category]])
+       [:div [:span.field-label "Category: "]
+        (when category-color
+          [:span.category-swatch {:style {:background-color category-color}}])
+        [:span.category-value category]])
      [:div [:span.field-label "Will Auto-Renew: "] (if auto-renew? "Yes" "No")]
      (when account
        [:div [:span.field-label "Account: "]
@@ -809,40 +1830,64 @@ has its own =.checkbox-label= class to combine with.
 
 (defn subscription-card
   "A single subscription; click the summary row to expand/collapse full
-   detail, and toggle editing within the expanded view."
+   detail, and toggle editing/deletion within the expanded view."
   [_]
   (let [expanded? (r/atom false)
-        editing? (r/atom false)]
-    (fn [{sub-name :name :keys [cost status] :as subscription}]
-      [:div.subscription-card
-       [:div.subscription-summary {:on-click #(swap! expanded? not)}
-        [:span.subscription-name sub-name]
-        [:span.subscription-cost (str "$" cost)]
-        [:span.subscription-frequency (format-frequency subscription)]
-        [:span.subscription-status (name status)]]
-       (when @expanded?
-         (if @editing?
-           [subscription-form {:initial subscription
-                                :on-success #(reset! editing? false)
-                                :on-cancel #(reset! editing? false)}]
-           [:div
-            [subscription-details subscription]
-            [:button.edit-toggle {:type "button"
-                                   :on-click #(reset! editing? true)}
-             "Edit"]]))])))
+        editing? (r/atom false)
+        confirming? (r/atom false)]
+    (fn [{sub-name :name :keys [id status category] :as subscription}]
+      (let [category-color @(re-frame/subscribe [::subs/category-color category])
+            inactive? (or (= status :cancelled) (util/past-end-date? subscription))]
+        [:div.subscription-card
+         {:class (when inactive? "subscription-card--cancelled")
+          :style {:border-left (when category-color (str "4px solid " category-color))}}
+         [:div.subscription-summary {:on-click #(when-not @editing? (swap! expanded? not))
+                                      :style {:cursor (if @editing? "default" "pointer")}}
+          [:span.subscription-name sub-name]
+          [:span.subscription-cost-freq (format-cost-frequency subscription)]
+          [:span.subscription-status {:title (status-title subscription)}
+           (status-symbol subscription)]]
+         (when @expanded?
+           (cond
+             @editing?
+             [subscription-form {:initial subscription
+                                  :on-success #(reset! editing? false)
+                                  :on-cancel #(reset! editing? false)}]
+
+             @confirming?
+             [:div.confirm-prompt
+              [:span "Delete this subscription?"]
+              [:button.danger {:type "button"
+                                :on-click #(re-frame/dispatch [::events/remove-subscription id])}
+               "Delete"]
+              [:button {:type "button" :on-click #(reset! confirming? false)} "Cancel"]]
+
+             :else
+             [:div
+              [subscription-details subscription]
+              [:div.card-actions
+               [:button.edit-toggle {:type "button"
+                                      :on-click #(reset! editing? true)}
+                "Edit"]
+               [:button.delete-toggle {:type "button"
+                                        :on-click #(reset! confirming? true)}
+                "Delete"]]]))]))))
 
 (defn subscription-list []
-  (let [subscriptions @(re-frame/subscribe [::subs/subscription-list])]
+  (let [all @(re-frame/subscribe [::subs/subscription-list])
+        subscriptions @(re-frame/subscribe [::subs/filtered-subscriptions])]
     [:div.subscription-list
-     (if (empty? subscriptions)
-       [:p.empty-state "No subscriptions yet."]
-       (doall
-        (for [{:keys [id] :as subscription} subscriptions]
-          ^{:key id} [subscription-card subscription])))]))
+     (cond
+       (empty? all) [:p.empty-state "No subscriptions yet."]
+       (empty? subscriptions) [:p.empty-state "No subscriptions match the current filters."]
+       :else (doall
+              (for [{:keys [id] :as subscription} subscriptions]
+                ^{:key id} [subscription-card subscription])))]))
 
 (def ^:private empty-subscription-form
   {:name "" :cost "" :frequency :monthly :custom-interval-days ""
-   :billing-day "" :billing-weekday "" :start-date "" :category "" :account-id ""
+   :billing-day "" :billing-month "" :billing-weekday "" :start-date "" :end-date ""
+   :category "" :account-id ""
    :auto-renew? true :url "" :notes ""})
 
 (defn- blank->nil [s]
@@ -850,17 +1895,19 @@ has its own =.checkbox-label= class to combine with.
 
 (defn- form->subscription
   "Coerces raw string form state into the shape ::events/add-subscription expects."
-  [{:keys [name cost frequency custom-interval-days billing-day billing-weekday
-           start-date category account-id auto-renew? url notes]}]
+  [{:keys [name cost frequency custom-interval-days billing-day billing-month
+           billing-weekday start-date end-date category account-id auto-renew? url notes]}]
   {:name name
    :cost (js/parseFloat cost)
    :frequency frequency
    :custom-interval-days (when (= frequency :custom) (js/parseInt custom-interval-days))
    :billing-day (when (contains? #{:monthly :quarterly :yearly} frequency)
                   (js/parseInt billing-day))
+   :billing-month (when (= frequency :yearly) (js/parseInt billing-month))
    :billing-weekday (when (and (= frequency :weekly) (seq billing-weekday))
                        (keyword billing-weekday))
    :start-date (blank->nil start-date)
+   :end-date (blank->nil end-date)
    :category (blank->nil category)
    :account-id (blank->nil account-id)
    :auto-renew? auto-renew?
@@ -869,15 +1916,17 @@ has its own =.checkbox-label= class to combine with.
 
 (defn- subscription->form
   "Inverse of form->subscription: seeds form state from an existing subscription."
-  [{:keys [name cost frequency custom-interval-days billing-day billing-weekday
-           start-date category account-id auto-renew? url notes]}]
-  {:name name
+  [{sub-name :name :keys [cost frequency custom-interval-days billing-day billing-month
+                           billing-weekday start-date end-date category account-id auto-renew? url notes]}]
+  {:name sub-name
    :cost (str cost)
    :frequency frequency
    :custom-interval-days (if custom-interval-days (str custom-interval-days) "")
    :billing-day (if billing-day (str billing-day) "")
+   :billing-month (if billing-month (str billing-month) "")
    :billing-weekday (if billing-weekday (name billing-weekday) "")
    :start-date (or start-date "")
+   :end-date (or end-date "")
    :category (or category "")
    :account-id (or account-id "")
    :auto-renew? auto-renew?
@@ -885,26 +1934,40 @@ has its own =.checkbox-label= class to combine with.
    :notes (or notes "")})
 
 (defn- form-field
-  "Wraps `input` in a label, adding a `field-modified` class when `k`'s
-   current value differs from the form's initial value (edit mode only)."
-  [modified? k label-text input]
-  [:label {:class (when (modified? k) "field-modified")} label-text input])
+  "Wraps `input` in a label, adding a modified-field accent when `k`'s
+   current value differs from the form's initial value (edit mode only).
+   When `accent-color` is given, the accent border uses it directly
+   (so it matches the item's category instead of clashing with it);
+   otherwise it falls back to the generic `field-modified` color."
+  ([modified? k label-text input] (form-field modified? k label-text input nil))
+  ([modified? k label-text input accent-color]
+   (if (and (modified? k) accent-color)
+     [:label {:class "field-modified-accent" :style {:border-left-color accent-color}}
+      label-text input]
+     [:label {:class (when (modified? k) "field-modified")} label-text input])))
 
 (defn subscription-form
   "Inline form for creating a new subscription, or editing an existing one
    when `:initial` (a subscription) is passed."
   [{:keys [initial on-success on-cancel]}]
   (let [form (r/atom (if initial (subscription->form initial) empty-subscription-form))
-        initial-form (when initial (subscription->form initial))]
+        initial-form (when initial (subscription->form initial))
+        datalist-id (str "category-options-" (random-uuid))
+        confirming-discard? (r/atom false)]
     (fn [{:keys [initial on-success on-cancel]}]
       (let [current @form
+            dirty? (and initial-form (not= current initial-form))
             modified? (fn [k] (and initial-form (not= (get current k) (get initial-form k))))
             {form-name :name :keys [cost frequency custom-interval-days
-                                     billing-day billing-weekday start-date
+                                     billing-day billing-month billing-weekday start-date end-date
                                      category account-id auto-renew? url notes]} current
-            accounts @(re-frame/subscribe [::subs/account-list])]
-        [:form.subscription-form
-         {:on-submit (fn [e]
+            accounts @(re-frame/subscribe [::subs/account-list])
+            category-names @(re-frame/subscribe [::subs/category-names])
+            category-key (when (seq category) (str/lower-case category))
+            category-color (when category-key @(re-frame/subscribe [::subs/category-color category-key]))]
+        [:form.entity-form
+         {:class (when initial "entity-form--nested")
+          :on-submit (fn [e]
                        (.preventDefault e)
                        (if-let [id (:id initial)]
                          (re-frame/dispatch [::events/update-subscription id (form->subscription @form)])
@@ -914,27 +1977,41 @@ has its own =.checkbox-label= class to combine with.
          [form-field modified? :name "Name"
           [:input {:type "text" :required true
                    :value form-name
-                   :on-change #(swap! form assoc :name (.. % -target -value))}]]
+                   :on-change #(swap! form assoc :name (.. % -target -value))}]
+          category-color]
          [form-field modified? :cost "Cost"
           [:input {:type "number" :step "0.01" :required true
                    :value cost
-                   :on-change #(swap! form assoc :cost (.. % -target -value))}]]
+                   :on-change #(swap! form assoc :cost (.. % -target -value))}]
+          category-color]
          [form-field modified? :frequency "Frequency"
           [:select {:value (name frequency)
                     :on-change #(swap! form assoc :frequency (keyword (.. % -target -value)))}
            (doall
             (for [f [:weekly :monthly :quarterly :yearly :custom]]
-              ^{:key f} [:option {:value (name f)} (name f)]))]]
+              ^{:key f} [:option {:value (name f)} (name f)]))]
+          category-color]
          (when (= frequency :custom)
            [form-field modified? :custom-interval-days "Interval (days)"
-            [:input {:type "number"
+            [:input {:type "number" :min "1" :step "1" :required true
                      :value custom-interval-days
-                     :on-change #(swap! form assoc :custom-interval-days (.. % -target -value))}]])
+                     :on-change #(swap! form assoc :custom-interval-days (.. % -target -value))}]
+            category-color])
+         (when (= frequency :yearly)
+           [form-field modified? :billing-month "Billing Month"
+            [:select {:value billing-month :required true
+                      :on-change #(swap! form assoc :billing-month (.. % -target -value))}
+             [:option {:value ""} "Select a month"]
+             (doall
+              (for [[i month-name] (map-indexed vector month-names)]
+                ^{:key i} [:option {:value (str (inc i))} month-name]))]
+            category-color])
          (when (contains? #{:monthly :quarterly :yearly} frequency)
            [form-field modified? :billing-day "Billing Day (1-31)"
             [:input {:type "number" :min "1" :max "31" :step "1" :required true
                      :value billing-day
-                     :on-change #(swap! form assoc :billing-day (.. % -target -value))}]])
+                     :on-change #(swap! form assoc :billing-day (.. % -target -value))}]
+            category-color])
          (when (= frequency :weekly)
            [form-field modified? :billing-weekday "Billing Weekday"
             [:select {:value billing-weekday :required true
@@ -942,37 +2019,102 @@ has its own =.checkbox-label= class to combine with.
              [:option {:value ""} "Select a day"]
              (doall
               (for [d [:sunday :monday :tuesday :wednesday :thursday :friday :saturday]]
-                ^{:key d} [:option {:value (name d)} (str/capitalize (name d))]))]])
+                ^{:key d} [:option {:value (name d)} (str/capitalize (name d))]))]
+            category-color])
          [form-field modified? :start-date "Start Date"
           [:input {:type "date"
                    :value start-date
-                   :on-change #(swap! form assoc :start-date (.. % -target -value))}]]
+                   :on-change #(swap! form assoc :start-date (.. % -target -value))}]
+          category-color]
+         [form-field modified? :end-date "End Date"
+          [:input {:type "date"
+                   :value end-date
+                   :on-change #(swap! form assoc :end-date (.. % -target -value))}]
+          category-color]
          [form-field modified? :category "Category"
-          [:input {:type "text"
+          [:input {:type "text" :list datalist-id
                    :value category
-                   :on-change #(swap! form assoc :category (.. % -target -value))}]]
+                   :on-change #(swap! form assoc :category (.. % -target -value))}]
+          category-color]
+         [:datalist {:id datalist-id}
+          (doall
+           (for [c category-names]
+             ^{:key c} [:option {:value (str/capitalize c)}]))]
+         (when category-key
+           [:label "Category Color"
+            [:input {:type "color"
+                     :value (or category-color "#cccccc")
+                     :on-change #(re-frame/dispatch
+                                  [::events/set-category-color category-key (.. % -target -value)])}]])
          [form-field modified? :account-id "Account"
           [:select {:value account-id
                     :on-change #(swap! form assoc :account-id (.. % -target -value))}
            [:option {:value ""} "No account"]
            (doall
             (for [{:keys [id name last-digits]} accounts]
-              ^{:key id} [:option {:value id} (str name " (••" last-digits ")")]))]]
-         [:label.checkbox-label {:class (when (modified? :auto-renew?) "field-modified")}
+              ^{:key id} [:option {:value id} (str name " (••" last-digits ")")]))]
+          category-color]
+         [:label.checkbox-label
+          {:class (when (modified? :auto-renew?) (if category-color "field-modified-accent" "field-modified"))
+           :style (when (and (modified? :auto-renew?) category-color) {:border-left-color category-color})}
           [:input {:type "checkbox" :checked auto-renew?
                    :on-change #(swap! form assoc :auto-renew? (.. % -target -checked))}]
           " Will Auto-Renew"]
          [form-field modified? :url "Management URL"
           [:input {:type "text"
                    :value url
-                   :on-change #(swap! form assoc :url (.. % -target -value))}]]
+                   :on-change #(swap! form assoc :url (.. % -target -value))}]
+          category-color]
          [form-field modified? :notes "Notes"
           [:textarea {:value notes
-                      :on-change #(swap! form assoc :notes (.. % -target -value))}]]
-         [:div.form-actions
-          [:button {:type "submit"} (if initial "Save changes" "Add subscription")]
-          (when initial
-            [:button {:type "button" :on-click #(when on-cancel (on-cancel))} "Cancel"])]]))))
+                      :on-change #(swap! form assoc :notes (.. % -target -value))}]
+          category-color]
+         (if @confirming-discard?
+           [:div.confirm-prompt
+            [:span "Discard unsaved changes?"]
+            [:button.danger {:type "button" :on-click #(when on-cancel (on-cancel))} "Discard"]
+            [:button {:type "button" :on-click #(reset! confirming-discard? false)} "Keep Editing"]]
+           [:div.form-actions
+            [:button {:type "submit"} (if initial "Save changes" "Add subscription")]
+            (when initial
+              [:button {:type "button"
+                        :on-click #(if dirty?
+                                     (reset! confirming-discard? true)
+                                     (when on-cancel (on-cancel)))}
+               "Cancel"])])]))))
+
+(defn- filter-controls []
+  (let [search @(re-frame/subscribe [::subs/search])
+        status-filter @(re-frame/subscribe [::subs/status-filter])
+        category-filter @(re-frame/subscribe [::subs/category-filter])
+        sort-by @(re-frame/subscribe [::subs/sort-by])
+        sort-dir @(re-frame/subscribe [::subs/sort-dir])
+        category-names @(re-frame/subscribe [::subs/category-names])]
+    [:div.filter-controls
+     [:input {:type "search" :placeholder "Search by name..."
+              :value search
+              :on-change #(re-frame/dispatch [::events/set-search (.. % -target -value)])}]
+     [:select {:value (if status-filter (name status-filter) "")
+               :on-change #(let [v (.. % -target -value)]
+                             (re-frame/dispatch [::events/set-status-filter (when (seq v) (keyword v))]))}
+      [:option {:value ""} "All statuses"]
+      (doall
+       (for [s [:active :paused :cancelled]]
+         ^{:key s} [:option {:value (name s)} (str/capitalize (name s))]))]
+     [:select {:value (or category-filter "")
+               :on-change #(let [v (.. % -target -value)]
+                             (re-frame/dispatch [::events/set-category-filter (when (seq v) v)]))}
+      [:option {:value ""} "All categories"]
+      (doall
+       (for [c category-names]
+         ^{:key c} [:option {:value c} (str/capitalize c)]))]
+     [:select {:value (name sort-by)
+               :on-change #(re-frame/dispatch [::events/set-sort-by (keyword (.. % -target -value))])}
+      (doall
+       (for [[k label] [[:name "Name"] [:cost "Cost"] [:status "Status"]]]
+         ^{:key k} [:option {:value (name k)} label]))]
+     [:button {:type "button" :on-click #(re-frame/dispatch [::events/toggle-sort-dir])}
+      (if (= sort-dir :desc) "↓ Desc" "↑ Asc")]]))
 
 (defn subscriptions-panel []
   (let [show-form? (r/atom false)]
@@ -984,12 +2126,188 @@ has its own =.checkbox-label= class to combine with.
          (if @show-form? "Cancel" "+ Add subscription")]]
        (when @show-form?
          [subscription-form {:on-success #(reset! show-form? false)}])
+       [filter-controls]
        [subscription-list]])))
+
+(defn account-details
+  "Full field detail shown when an account card is expanded."
+  [{:keys [created-at]}]
+  [:div.account-details
+   (when created-at
+     [:div [:span.field-label "Added: "] created-at])])
+
+(defn account-card
+  "A single account; click the summary row to expand/collapse, with
+   edit/delete inside the expanded view, mirroring subscription-card."
+  [_]
+  (let [expanded? (r/atom false)
+        editing? (r/atom false)
+        confirming? (r/atom false)]
+    (fn [{:keys [id name last-digits] :as account}]
+      (let [used-by @(re-frame/subscribe [::subs/subscriptions-for-account id])]
+        [:div.account-card
+         [:div.account-summary {:on-click #(when-not @editing? (swap! expanded? not))
+                                 :style {:cursor (if @editing? "default" "pointer")}}
+          [:span.account-name name]
+          [:span.account-digits (str "••" last-digits)]]
+         (when @expanded?
+           (cond
+             @editing?
+             [account-form {:initial account
+                            :on-success #(reset! editing? false)
+                            :on-cancel #(reset! editing? false)}]
+
+             @confirming?
+             [:div.confirm-prompt
+              [:span (if (seq used-by)
+                       (str "Delete this account? " (count used-by)
+                            " subscription" (when (> (count used-by) 1) "s")
+                            " using it will be unlinked, not deleted.")
+                       "Delete this account?")]
+              [:button.danger {:type "button"
+                                :on-click #(re-frame/dispatch [::events/remove-account id])}
+               "Delete"]
+              [:button {:type "button" :on-click #(reset! confirming? false)} "Cancel"]]
+
+             :else
+             [:div
+              [account-details account]
+              [:div.card-actions
+               [:button.edit-toggle {:type "button" :on-click #(reset! editing? true)} "Edit"]
+               [:button.delete-toggle {:type "button" :on-click #(reset! confirming? true)} "Delete"]]]))]))))
+
+(defn account-list []
+  (let [accounts @(re-frame/subscribe [::subs/account-list])]
+    [:div.account-list
+     (if (empty? accounts)
+       [:p.empty-state "No accounts yet."]
+       (doall
+        (for [{:keys [id] :as account} accounts]
+          ^{:key id} [account-card account])))]))
+
+(def ^:private empty-account-form
+  {:name "" :last-digits ""})
+
+(defn- account->form
+  "Seeds form state from an existing account (both fields are already
+   plain strings, so this is mostly identity --- kept for symmetry with
+   subscription->form, and in case a future field needs real coercion)."
+  [{:keys [name last-digits]}]
+  {:name name :last-digits last-digits})
+
+(defn- form->account
+  [{:keys [name last-digits]}]
+  {:name name :last-digits last-digits})
+
+(defn account-form
+  "Inline form for creating a new account, or editing an existing one when
+   `:initial` (an account) is passed."
+  [{:keys [initial on-success on-cancel]}]
+  (let [form (r/atom (if initial (account->form initial) empty-account-form))
+        initial-form (when initial (account->form initial))
+        confirming-discard? (r/atom false)]
+    (fn [{:keys [initial on-success on-cancel]}]
+      (let [current @form
+            dirty? (and initial-form (not= current initial-form))
+            modified? (fn [k] (and initial-form (not= (get current k) (get initial-form k))))
+            {:keys [name last-digits]} current]
+        [:form.entity-form
+         {:class (when initial "entity-form--nested")
+          :on-submit (fn [e]
+                       (.preventDefault e)
+                       (if-let [id (:id initial)]
+                         (re-frame/dispatch [::events/update-account id (form->account @form)])
+                         (re-frame/dispatch [::events/add-account (form->account @form)]))
+                       (when-not initial (reset! form empty-account-form))
+                       (when on-success (on-success)))}
+         [form-field modified? :name "Name"
+          [:input {:type "text" :required true
+                   :value name
+                   :on-change #(swap! form assoc :name (.. % -target -value))}]]
+         [form-field modified? :last-digits "Last Digits"
+          [:input {:type "text" :required true
+                   :value last-digits
+                   :on-change #(swap! form assoc :last-digits (.. % -target -value))}]]
+         (if @confirming-discard?
+           [:div.confirm-prompt
+            [:span "Discard unsaved changes?"]
+            [:button.danger {:type "button" :on-click #(when on-cancel (on-cancel))} "Discard"]
+            [:button {:type "button" :on-click #(reset! confirming-discard? false)} "Keep Editing"]]
+           [:div.form-actions
+            [:button {:type "submit"} (if initial "Save changes" "Add account")]
+            (when initial
+              [:button {:type "button"
+                        :on-click #(if dirty?
+                                     (reset! confirming-discard? true)
+                                     (when on-cancel (on-cancel)))}
+               "Cancel"])])]))))
+
+(defn accounts-panel []
+  (let [show-form? (r/atom false)]
+    (fn []
+      [:div.accounts-panel
+       [:div.panel-header
+        [:h2 "Accounts"]
+        [:button {:type "button" :on-click #(swap! show-form? not)}
+         (if @show-form? "Cancel" "+ Add account")]]
+       (when @show-form?
+         [account-form {:on-success #(reset! show-form? false)}])
+       [account-list]])))
+
+(defn stats-bar []
+  (let [active-count @(re-frame/subscribe [::subs/active-subscription-count])
+        monthly @(re-frame/subscribe [::subs/total-monthly-cost])
+        yearly @(re-frame/subscribe [::subs/total-yearly-cost])]
+    [:div.stats-bar
+     [:div.stat [:span.stat-value active-count] [:span.stat-label "Active"]]
+     [:div.stat [:span.stat-value (str "$" (.toFixed monthly 2))] [:span.stat-label "Per Month"]]
+     [:div.stat [:span.stat-value (str "$" (.toFixed yearly 2))] [:span.stat-label "Per Year"]]]))
+
+(defn- export-data!
+  [data]
+  (let [blob (js/Blob. #js [(pr-str data)] #js {:type "application/edn"})
+        url (js/URL.createObjectURL blob)
+        filename (str "subscription-tracker-export-"
+                      (.slice (.toISOString (js/Date.)) 0 10) ".edn")
+        a (js/document.createElement "a")]
+    (set! (.-href a) url)
+    (set! (.-download a) filename)
+    (.click a)
+    (js/URL.revokeObjectURL url)))
+
+(defn- import-file!
+  [file]
+  (let [reader (js/FileReader.)]
+    (set! (.-onload reader)
+          (fn [e]
+            (re-frame/dispatch [::events/import-data (.. e -target -result)])))
+    (.readAsText reader file)))
+
+(defn data-panel []
+  (let [export-data @(re-frame/subscribe [::subs/export-data])
+        import-error @(re-frame/subscribe [::subs/import-error])]
+    [:div.data-panel
+     [:div.panel-header
+      [:h2 "Data"]]
+     [:div.data-actions
+      [:button {:type "button" :on-click #(export-data! export-data)} "Export data"]
+      [:label.file-input-trigger {:for "import-file-input"} "Import Data"]
+      [:input#import-file-input.visually-hidden
+       {:type "file" :accept ".edn"
+        :on-change (fn [e]
+                     (when-let [file (-> e .-target .-files (aget 0))]
+                       (import-file! file))
+                     (set! (.. e -target -value) ""))}]]
+     (when import-error
+       [:p.import-error import-error])]))
 
 (defn main-panel []
   [:div
    [:h1 "Subscription Tracker"]
-   [subscriptions-panel]])
+   [stats-bar]
+   [subscriptions-panel]
+   [accounts-panel]
+   [data-panel]])
 #+END_SRC
 * Local Auto-tangle
 # Local Variables:
